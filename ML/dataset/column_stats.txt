@@ -1,0 +1,57 @@
+Column Statistics (Min, Max, and Difference)
+=============================================
+Column: Total_Assets
+  Minimum:    15.74
+  Maximum:    4002.81
+  Difference: 3987.07
+------------------------------
+Column: Equity
+  Minimum:    1.67
+  Maximum:    344.76
+  Difference: 343.09
+------------------------------
+Column: Total_Liabilities
+  Minimum:    12.94
+  Maximum:    3658.06
+  Difference: 3645.12
+------------------------------
+Column: HQLA
+  Minimum:    1.17
+  Maximum:    866.01
+  Difference: 864.84
+------------------------------
+Column: Net_Outflows_30d
+  Minimum:    1.29
+  Maximum:    731.66
+  Difference: 730.37
+------------------------------
+Column: Bad_Loans
+  Minimum:    0
+  Maximum:    0
+  Difference: 0
+------------------------------
+Column: Total_Loans
+  Minimum:    0
+  Maximum:    0
+  Difference: 0
+------------------------------
+Column: Est_CDS_Spread
+  Minimum:    62.57
+  Maximum:    488.98
+  Difference: 426.41
+------------------------------
+Column: Stock_Volatility
+  Minimum:    0.23
+  Maximum:    0.64
+  Difference: 0.41000000000000003
+------------------------------
+Column: Interbank_Assets
+  Minimum:    0.3148
+  Maximum:    480.3372
+  Difference: 480.0224
+------------------------------
+Column: Interbank_Liabilities
+  Minimum:    0.3148
+  Maximum:    480.3372
+  Difference: 480.0224
+------------------------------
