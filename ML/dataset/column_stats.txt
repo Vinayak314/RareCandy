@@ -1,57 +1,57 @@
-Column Statistics (Min, Max, and Difference)
-=============================================
+Updated Column Statistics (Including LR and LCR)
+==================================================
 Column: Total_Assets
-  Minimum:    15.74
-  Maximum:    4002.81
-  Difference: 3987.07
-------------------------------
+  Minimum:    15.7400
+  Maximum:    4002.8100
+  Difference: 3987.0700
+-----------------------------------
 Column: Equity
-  Minimum:    1.67
-  Maximum:    344.76
-  Difference: 343.09
-------------------------------
+  Minimum:    1.6700
+  Maximum:    344.7600
+  Difference: 343.0900
+-----------------------------------
 Column: Total_Liabilities
-  Minimum:    12.94
-  Maximum:    3658.06
-  Difference: 3645.12
-------------------------------
+  Minimum:    12.9400
+  Maximum:    3658.0600
+  Difference: 3645.1200
+-----------------------------------
 Column: HQLA
-  Minimum:    1.17
-  Maximum:    866.01
-  Difference: 864.84
-------------------------------
+  Minimum:    1.1700
+  Maximum:    866.0100
+  Difference: 864.8400
+-----------------------------------
 Column: Net_Outflows_30d
-  Minimum:    1.29
-  Maximum:    731.66
-  Difference: 730.37
-------------------------------
-Column: Bad_Loans
-  Minimum:    0
-  Maximum:    0
-  Difference: 0
-------------------------------
-Column: Total_Loans
-  Minimum:    0
-  Maximum:    0
-  Difference: 0
-------------------------------
+  Minimum:    1.2900
+  Maximum:    731.6600
+  Difference: 730.3700
+-----------------------------------
 Column: Est_CDS_Spread
-  Minimum:    62.57
-  Maximum:    488.98
-  Difference: 426.41
-------------------------------
+  Minimum:    62.5700
+  Maximum:    488.9800
+  Difference: 426.4100
+-----------------------------------
 Column: Stock_Volatility
-  Minimum:    0.23
-  Maximum:    0.64
-  Difference: 0.41000000000000003
-------------------------------
+  Minimum:    0.2300
+  Maximum:    0.6400
+  Difference: 0.4100
+-----------------------------------
 Column: Interbank_Assets
   Minimum:    0.3148
   Maximum:    480.3372
   Difference: 480.0224
-------------------------------
+-----------------------------------
 Column: Interbank_Liabilities
   Minimum:    0.3148
   Maximum:    480.3372
   Difference: 480.0224
-------------------------------
+-----------------------------------
+Column: LR
+  Minimum:    5.3185
+  Maximum:    14.5274
+  Difference: 9.2088
+-----------------------------------
+Column: LCR
+  Minimum:    0.2306
+  Maximum:    4.2741
+  Difference: 4.0435
+-----------------------------------
