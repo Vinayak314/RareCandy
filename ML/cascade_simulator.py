@@ -313,3 +313,167 @@ class CascadeSimulator:
             return 0.0
         
         return cascade_size / total_banks
+    
+    def get_interbank_exposure(self, bank_id: str) -> Dict[str, float]:
+        """
+        Get detailed interbank exposure for a specific bank.
+        
+        C.6 Interbank Exposure: Total amount Bank B has borrowed from other banks.
+        If Bank B is already heavily in debt to others, Bank A shouldn't add more.
+        
+        Args:
+            bank_id: Bank identifier
+            
+        Returns:
+            Dictionary with exposure details
+        """
+        if bank_id not in self.banks:
+            return {}
+        
+        bank = self.banks[bank_id]
+        
+        # Exposure TO this bank (what others owe this bank)
+        exposure_to = self.exposure_to.get(bank_id, [])
+        total_lent = sum(amount for _, amount in exposure_to)
+        
+        # Exposure FROM this bank (what this bank owes others)
+        exposure_from = self.exposure_from.get(bank_id, [])
+        total_borrowed = sum(amount for _, amount in exposure_from)
+        
+        return {
+            'bank_id': bank_id,
+            'total_lent': total_lent,
+            'total_borrowed': total_borrowed,
+            'net_interbank_position': total_lent - total_borrowed,
+            'interbank_borrowing_ratio': total_borrowed / bank.assets if bank.assets > 0 else float('inf'),
+            'counterparties_lending_to': len(exposure_from),
+            'counterparties_borrowing_from': len(exposure_to),
+            'is_net_borrower': total_borrowed > total_lent
+        }
+    
+    def get_all_interbank_exposures(self) -> Dict[str, Dict]:
+        """
+        Get interbank exposure details for all banks.
+        
+        Returns:
+            Dictionary mapping bank_id -> exposure details
+        """
+        return {bank_id: self.get_interbank_exposure(bank_id) for bank_id in self.banks}
+    
+    def calculate_contagion_risk_score(self, bank_id: str) -> Dict[str, float]:
+        """
+        Calculate comprehensive contagion risk score for a bank.
+        
+        Combines all metrics from task.txt:
+        A. Balance Sheet Fundamentals (Leverage, LCR, NPL)
+        B. Market Signals (CDS Spread, Volatility)
+        C. Network Position (Interbank Exposure, Asset Correlation)
+        
+        Args:
+            bank_id: Bank identifier
+            
+        Returns:
+            Dictionary with risk breakdown and total score
+        """
+        if bank_id not in self.banks:
+            return {}
+        
+        bank = self.banks[bank_id]
+        exposure = self.get_interbank_exposure(bank_id)
+        
+        # Get base risk metrics
+        risk_metrics = bank.get_risk_metrics()
+        counterparty_score = bank.calculate_counterparty_risk_score()
+        
+        # Calculate network centrality risk (based on borrowing/lending)
+        total_banks = len(self.banks)
+        connection_ratio = (exposure['counterparties_lending_to'] + 
+                          exposure['counterparties_borrowing_from']) / (2 * total_banks) if total_banks > 0 else 0
+        
+        # Higher interbank borrowing ratio = higher contagion risk
+        interbank_risk = min(exposure['interbank_borrowing_ratio'], 1.0)
+        
+        # Combined contagion risk
+        contagion_score = (
+            0.4 * counterparty_score +        # Base risk from task.txt metrics
+            0.3 * interbank_risk +            # Interbank exposure
+            0.3 * connection_ratio            # Network centrality
+        )
+        
+        return {
+            'bank_id': bank_id,
+            'counterparty_risk_score': counterparty_score,
+            'interbank_risk': interbank_risk,
+            'network_centrality_risk': connection_ratio,
+            'contagion_risk_score': contagion_score,
+            'risk_metrics': risk_metrics,
+            'interbank_exposure': exposure,
+            'risk_level': 'HIGH' if contagion_score > 0.6 else ('MEDIUM' if contagion_score > 0.3 else 'LOW')
+        }
+    
+    def identify_vulnerable_banks(self, threshold: float = 0.5) -> List[str]:
+        """
+        Identify banks vulnerable to contagion based on risk metrics.
+        
+        Args:
+            threshold: Risk score threshold (default: 0.5)
+            
+        Returns:
+            List of bank IDs with high contagion risk
+        """
+        vulnerable = []
+        for bank_id in self.banks:
+            risk = self.calculate_contagion_risk_score(bank_id)
+            if risk.get('contagion_risk_score', 0) >= threshold:
+                vulnerable.append(bank_id)
+        return vulnerable
+    
+    def get_systemic_risk_report(self) -> Dict:
+        """
+        Generate comprehensive systemic risk report for the network.
+        
+        Uses all metrics from task.txt to assess network-wide risk.
+        
+        Returns:
+            Dictionary with systemic risk analysis
+        """
+        # Calculate risk scores for all banks
+        all_risks = {bank_id: self.calculate_contagion_risk_score(bank_id) 
+                    for bank_id in self.banks}
+        
+        contagion_scores = [r['contagion_risk_score'] for r in all_risks.values()]
+        counterparty_scores = [r['counterparty_risk_score'] for r in all_risks.values()]
+        
+        # Count banks by risk level
+        high_risk = sum(1 for r in all_risks.values() if r['risk_level'] == 'HIGH')
+        medium_risk = sum(1 for r in all_risks.values() if r['risk_level'] == 'MEDIUM')
+        low_risk = sum(1 for r in all_risks.values() if r['risk_level'] == 'LOW')
+        
+        # Identify most vulnerable banks
+        sorted_risks = sorted(all_risks.items(), 
+                            key=lambda x: x[1]['contagion_risk_score'], 
+                            reverse=True)
+        top_5_vulnerable = [bank_id for bank_id, _ in sorted_risks[:5]]
+        
+        # Count banks with specific risk flags
+        desperate_banks = sum(1 for bank in self.banks.values() if bank.is_lcr_desperate())
+        high_leverage_banks = sum(1 for bank in self.banks.values() if bank.is_leverage_high_risk())
+        cds_warning_banks = sum(1 for bank in self.banks.values() if bank.is_cds_warning())
+        
+        return {
+            'network_summary': {
+                'total_banks': len(self.banks),
+                'high_risk_banks': high_risk,
+                'medium_risk_banks': medium_risk,
+                'low_risk_banks': low_risk,
+                'desperate_banks_lcr': desperate_banks,
+                'high_leverage_banks': high_leverage_banks,
+                'cds_warning_banks': cds_warning_banks,
+                'avg_contagion_risk': np.mean(contagion_scores) if contagion_scores else 0,
+                'max_contagion_risk': max(contagion_scores) if contagion_scores else 0,
+                'avg_counterparty_risk': np.mean(counterparty_scores) if counterparty_scores else 0,
+                'systemic_fragility': self.get_systemic_fragility()
+            },
+            'top_5_vulnerable_banks': top_5_vulnerable,
+            'bank_risk_details': all_risks
+        }
