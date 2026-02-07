@@ -20,8 +20,10 @@ Neo-FinNet is a graph-based simulation and machine learning system designed to m
 neo-finnet/
 ├── bank.py             # Bank and CCP classes
 ├── loan.py             # Interbank loans
+├── network_generator.py # Scale-free network generation
 ├── test_bank.py        # Bank/CCP unit tests
 ├── test_loan.py        # Loan unit tests
+├── test_network_generator.py # Network generator tests
 ├── requirements.txt    # Dependencies
 └── README.md           # Documentation
 ```
