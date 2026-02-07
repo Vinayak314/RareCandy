@@ -1,0 +1,11 @@
+{
+  "total_scenarios": 10000,
+  "avg_ccp_capital": 195.65835152610302,
+  "max_ccp_capital": 955.5487941265727,
+  "median_ccp_capital": 0.0,
+  "std_ccp_capital": 243.60473923369895,
+  "avg_defaults": 6.4866,
+  "max_defaults": 17,
+  "scenarios_with_contagion": 4005,
+  "contagion_rate": 0.4005
+}
