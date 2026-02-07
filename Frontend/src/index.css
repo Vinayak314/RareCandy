@@ -1,0 +1,6 @@
+/* Clean slate - functionality moved to styles/theme.css */
+body {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
