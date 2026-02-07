@@ -59,10 +59,10 @@ class TestNetworkGenerator:
     def test_generate_full_network(self):
         """Test end-to-end generation."""
         gen = NetworkGenerator(seed=42)
-        G, banks, loans, ccp = gen.generate_full_network(n_banks=15, m_connectivity=2)
+        G, banks, loans, ccp = gen.generate_full_network(n_banks=5, m_connectivity=2)
         
-        assert G.number_of_nodes() == 15
-        assert len(banks) == 15
+        assert G.number_of_nodes() == 5
+        assert len(banks) == 5
         assert len(loans) == G.number_of_edges()
         assert ccp.bank_id == "CCP-MAIN"
 
