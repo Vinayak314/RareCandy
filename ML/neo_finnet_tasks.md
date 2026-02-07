@@ -6,73 +6,73 @@
 ## Phase 1: Core Environment (The Sandbox)
 
 ### Module 1: Synthetic Network Generator
-- [ ] **1.1** Set up project structure and dependencies
-  - [ ] Initialize Python project with virtual environment
-  - [ ] Install core dependencies: `NetworkX`, `NumPy`, `Pandas`, `Matplotlib`
-  - [ ] Create project directory structure (`/src`, `/data`, `/models`, `/tests`, `/notebooks`)
-  - [ ] Set up version control (Git) with `.gitignore`
+- [x] **1.1** Set up project structure and dependencies
+  - [x] Initialize Python project with virtual environment
+  - [x] Install core dependencies: `NetworkX`, `NumPy`, `Pandas`, `Matplotlib`
+  - [x] Create project directory structure (`/src`, `/data`, `/models`, `/tests`, `/notebooks`)
+  - [x] Set up version control (Git) with `.gitignore`
 
-- [ ] **1.2** Implement Bank/CCP Node class
-  - [ ] Define `Bank` class with attributes:
+- [x] **1.2** Implement Bank/CCP Node class
+  - [x] Define `Bank` class with attributes:
     - `bank_id`: Unique identifier
     - `equity`: Current equity capital
     - `assets`: Total assets
     - `liabilities`: Total liabilities
     - `liquidity`: Available liquid assets
     - `risk_weight`: Systemic importance score
-  - [ ] Implement methods: `update_balance_sheet()`, `calculate_leverage()`, `is_solvent()`
-  - [ ] Define `CCP` (Central Counterparty) class inheriting from `Bank` with additional attributes:
+  - [x] Implement methods: `update_balance_sheet()`, `calculate_leverage()`, `is_solvent()`
+  - [x] Define `CCP` (Central Counterparty) class inheriting from `Bank` with additional attributes:
     - `margin_requirements`: Dictionary of margin rules
     - `default_fund`: Mutualized loss pool
     - `netting_positions`: Net positions per member
-  - [ ] Write unit tests for Bank and CCP classes
+  - [x] Write unit tests for Bank and CCP classes
 
-- [ ] **1.3** Build Scale-Free Network Generator
-  - [ ] Implement Barabási-Albert preferential attachment algorithm
-  - [ ] Create `NetworkGenerator` class with methods:
+- [x] **1.3** Build Scale-Free Network Generator
+  - [x] Implement Barabási-Albert preferential attachment algorithm
+  - [x] Create `NetworkGenerator` class with methods:
     - `generate_scale_free(n_nodes, m_edges)`: Generate scale-free topology
     - `assign_node_attributes()`: Assign realistic financial attributes to nodes
     - `validate_network_properties()`: Check degree distribution follows power law
-  - [ ] Add configuration parameters (network density, clustering coefficient)
-  - [ ] Implement visualization function for network topology
-  - [ ] Write tests to verify scale-free properties (degree distribution, hub identification)
+  - [x] Add configuration parameters (network density, clustering coefficient)
+  - [x] Implement visualization function for network topology
+  - [x] Write tests to verify scale-free properties (degree distribution, hub identification)
 
-- [ ] **1.4** Implement Interbank Loan Edge System
-  - [ ] Define `InterbankLoan` class with attributes:
+- [x] **1.4** Implement Interbank Loan Edge System
+  - [x] Define `InterbankLoan` class with attributes:
     - `lender_id`, `borrower_id`
     - `principal`: Loan amount
     - `interest_rate`: Rate charged
     - `maturity`: Time to maturity
     - `collateral`: Pledged collateral value
-  - [ ] Create edge weight assignment based on bank size correlation
-  - [ ] Implement loan portfolio aggregation per bank
-  - [ ] Add method to calculate exposure concentration (Herfindahl index)
+  - [x] Create edge weight assignment based on bank size correlation
+  - [x] Implement loan portfolio aggregation per bank
+  - [x] Add method to calculate exposure concentration (Herfindahl index)
 
 ### Module 2: The CCP "Super-Node"
 
-- [ ] **2.1** Implement Multilateral Netting Engine
-  - [ ] Create `NettingEngine` class with method `calculate_net_positions(bilateral_trades)`
-  - [ ] Implement netting algorithm:
+- [x] **2.1** Implement Multilateral Netting Engine
+  - [x] Create `NettingEngine` class with method `calculate_net_positions(bilateral_trades)`
+  - [x] Implement netting algorithm:
     - Input: List of bilateral trades between banks
     - Output: Single net position per bank vs. CCP
-  - [ ] Add compression ratio metric (bilateral vs. netted exposure)
-  - [ ] Write tests with sample trade datasets
+  - [x] Add compression ratio metric (bilateral vs. netted exposure)
+  - [x] Write tests with sample trade datasets
 
-- [ ] **2.2** Build Margin Calculation System
-  - [ ] Implement `MarginCalculator` class with methods:
+- [x] **2.2** Build Margin Calculation System
+  - [x] Implement `MarginCalculator` class with methods:
     - `calculate_initial_margin(position, volatility)`: Using SPAN or VaR methodology
     - `calculate_variation_margin(position, price_change)`: Mark-to-market adjustments
     - `calculate_default_fund_contribution(bank)`: Based on systemic importance
-  - [ ] Add configurable margin models (fixed percentage, VaR-based, SIMM)
-  - [ ] Implement margin call and collateral management logic
-  - [ ] Create visualization for margin requirements vs. bank liquidity
+  - [x] Add configurable margin models (fixed percentage, VaR-based, SIMM)
+  - [x] Implement margin call and collateral management logic
+  - [x] Create visualization for margin requirements vs. bank liquidity
 
-- [ ] **2.3** Integrate CCP into Network
-  - [ ] Modify network structure to include CCP as central node
-  - [ ] Implement trade clearing workflow:
+- [x] **2.3** Integrate CCP into Network
+  - [x] Modify network structure to include CCP as central node
+  - [x] Implement trade clearing workflow:
     - Bilateral trade submission → Netting → Margin posting → Settlement
-  - [ ] Add CCP default waterfall logic (margin → default fund → loss mutualization)
-  - [ ] Create metrics: total margin held, default fund size, CCP leverage
+  - [x] Add CCP default waterfall logic (margin → default fund → loss mutualization)
+  - [x] Create metrics: total margin held, default fund size, CCP leverage
 
 ---
 
@@ -108,33 +108,33 @@
 
 ### Module 4: Shock & Cascade Simulator
 
-- [ ] **4.1** Design Shock Injection System
-  - [ ] Create `ShockGenerator` class with shock types:
+- [x] **4.1** Design Shock Injection System
+  - [x] Create `ShockGenerator` class with shock types:
     - `idiosyncratic_shock(bank_id, magnitude)`: Single bank equity loss
     - `systematic_shock(sector, magnitude)`: Correlated shock to bank subset
     - `liquidity_shock(market_rate)`: Sudden funding cost increase
-  - [ ] Implement shock severity distributions (uniform, normal, fat-tailed)
-  - [ ] Add temporal shock patterns (single event, repeated shocks, stress scenarios)
+  - [x] Implement shock severity distributions (uniform, normal, fat-tailed)
+  - [x] Add temporal shock patterns (single event, repeated shocks, stress scenarios)
 
-- [ ] **4.2** Implement Contagion Propagation Algorithm
-  - [ ] Create `ContagionSimulator` class with method `propagate_default(initial_defaulter)`:
+- [x] **4.2** Implement Contagion Propagation Algorithm
+  - [x] Create `ContagionSimulator` class with method `propagate_default(initial_defaulter)`:
     - **Step 1**: Initial bank defaults → mark liabilities as losses
     - **Step 2**: Counterparties update balance sheets → check solvency
     - **Step 3**: If counterparty defaults → repeat from Step 1
     - **Step 4**: Terminate when no new defaults occur
-  - [ ] Add CCP-mediated contagion logic:
+  - [x] Add CCP-mediated contagion logic:
     - CCP absorbs losses via margin/default fund
     - If CCP fails → loss mutualization to surviving members
-  - [ ] Implement fire-sale externalities (asset liquidation depresses prices)
+  - [x] Implement fire-sale externalities (asset liquidation depresses prices)
 
-- [ ] **4.3** Build Cascade Metrics & Analytics
-  - [ ] Implement metrics:
+- [x] **4.3** Build Cascade Metrics & Analytics
+  - [x] Implement metrics:
     - `cascade_size`: Number of defaulted banks
     - `cascade_depth`: Number of contagion rounds
     - `systemic_loss`: Total equity destroyed
     - `network_fragmentation`: Disconnected components post-cascade
-  - [ ] Create comparison metrics: with-CCP vs. without-CCP scenarios
-  - [ ] Add visualization: animated cascade propagation on network graph
+  - [x] Create comparison metrics: with-CCP vs. without-CCP scenarios
+  - [x] Add visualization: animated cascade propagation on network graph
 
 - [ ] **4.4** Run Sensitivity Analysis
   - [ ] Vary parameters: network density, margin levels, shock size
