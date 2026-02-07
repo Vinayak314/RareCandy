@@ -1,0 +1,5 @@
+# Core Dependencies
+numpy>=1.24.0
+
+# Testing
+pytest>=7.3.0
