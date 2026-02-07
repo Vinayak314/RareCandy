@@ -424,6 +424,7 @@ def generate_random_graph_with_sccs(bank_attributes, num_sccs=5, prob_intra=0.5,
     print(f"  Large->Small: {large_to_small}")
     print(f"  Small->Large: {small_to_large}")
     print(f"  Small->Small: {small_to_small}")
+    prin
     
     return graph
 
@@ -1109,13 +1110,13 @@ if __name__ == '__main__':
     
     # Get list of stock tickers for scenarios
     tickers = list(stock_prices.keys())
-    devaluation_options = [10, 20, 30, 40]
     
-    def generate_random_stock_scenario(tickers, devaluation_options):
+    def generate_random_stock_scenario(tickers):
         """Generate a random stock devaluation scenario with 1-3 stocks."""
         num_stocks = random.randint(1, 3)
         selected_stocks = random.sample(tickers, min(num_stocks, len(tickers)))
-        return {stock: random.choice(devaluation_options) for stock in selected_stocks}
+        # Random continuous devaluation between 10% and 40%
+        return {stock: round(10 + (40 - 10) * (1 - random.random()**(1/3)), 1) for stock in selected_stocks}
     
     def print_multi_stock_report(result):
         """Print report for multi-stock devaluation scenario."""
@@ -1130,7 +1131,7 @@ if __name__ == '__main__':
     
     # Run 4 random multi-stock devaluation scenarios
     for scenario_num in range(1, 5):
-        scenario = generate_random_stock_scenario(tickers, devaluation_options)
+        scenario = generate_random_stock_scenario(tickers)
         scenario_desc = ", ".join([f"{s}:{p}%" for s, p in scenario.items()])
         
         print("\n" + "=" * 70)
