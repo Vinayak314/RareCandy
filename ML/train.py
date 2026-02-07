@@ -3,6 +3,56 @@ import csv
 from collections import defaultdict
 
 
+def generate_margin_requirements(bank_attributes, margin_ratio_range=(0.02, 0.08)):
+    """
+    Generate margin requirements for each bank.
+    
+    Margin requirements are funds that must be held as collateral and cannot be used
+    for normal operations. However, during devaluation events, this margin can be
+    released to absorb losses.
+    
+    Args:
+        bank_attributes: dict {bank_name: {Total_Assets: ..., ...}}
+        margin_ratio_range: (min, max) ratio of Total_Assets to hold as margin
+    
+    Returns:
+        margin_requirements: dict {bank_name: margin_amount_in_billions}
+    """
+    margin_requirements = {}
+    
+    for bank_name, attrs in bank_attributes.items():
+        total_assets = attrs['Total_Assets']
+        # Random margin ratio within range
+        margin_ratio = random.uniform(margin_ratio_range[0], margin_ratio_range[1])
+        margin_amount = total_assets * margin_ratio
+        margin_requirements[bank_name] = margin_amount
+    
+    return margin_requirements
+
+
+def print_margin_summary(margin_requirements, bank_attributes):
+    """Print summary of margin requirements."""
+    print(f"\n{'='*60}")
+    print(f"MARGIN REQUIREMENTS SUMMARY")
+    print(f"{'='*60}")
+    print(f"{'Bank':<10}{'Total Assets':>15}{'Margin':>15}{'Margin %':>12}")
+    print("-" * 52)
+    
+    total_margin = 0
+    for bank, margin in sorted(margin_requirements.items(), key=lambda x: -x[1])[:15]:
+        assets = bank_attributes[bank]['Total_Assets']
+        pct = (margin / assets) * 100
+        total_margin += margin
+        print(f"{bank:<10}${assets:>13.2f}B${margin:>13.2f}B{pct:>10.1f}%")
+    
+    if len(margin_requirements) > 15:
+        print(f"... and {len(margin_requirements) - 15} more banks")
+    
+    print("-" * 52)
+    print(f"{'TOTAL':<10}{'':<15}${total_margin:>13.2f}B")
+    print()
+
+
 def load_stock_prices(csv_path, num_stocks=10):
     """
     Load stock data from CSV and pick `num_stocks` random unique tickers.
@@ -381,16 +431,19 @@ def generate_random_graph_with_sccs(bank_attributes, num_sccs=5, prob_intra=0.5,
 class BankingNetworkContagion:
     """Simulates contagion/cascade effects in a banking network."""
     
-    def __init__(self, graph, stock_prices=None):
+    def __init__(self, graph, stock_prices=None, margin_requirements=None):
         """
         Args:
             graph: Dict of {bank_name: {neighbors: [...], attributes: {...}, holdings: {...}}}
             stock_prices: Dict of {ticker: price} for stock devaluation scenarios
+            margin_requirements: Dict of {bank_name: margin_amount} - locked collateral
         """
         self.graph = graph
         self.stock_prices = stock_prices.copy() if stock_prices else {}
         self.current_stock_prices = stock_prices.copy() if stock_prices else {}
+        self.margin_requirements = margin_requirements.copy() if margin_requirements else {}
         self.bank_states = {}  # Track current health of each bank
+        self.margin_states = {}  # Track remaining margin for each bank
         self.failed_banks = set()
         self.history = []
         self.initialize_states()
@@ -399,8 +452,42 @@ class BankingNetworkContagion:
         """Initialize each bank's state as a copy of its attributes."""
         for bank in self.graph:
             self.bank_states[bank] = self.graph[bank]['attributes'].copy()
+            # Initialize margin: locked amount that can be used as buffer during stress
+            self.margin_states[bank] = self.margin_requirements.get(bank, 0)
+            # Reduce available HQLA by margin (margin is locked)
+            if self.margin_states[bank] > 0:
+                self.bank_states[bank]['HQLA'] = max(0, self.bank_states[bank]['HQLA'] - self.margin_states[bank])
         # Reset stock prices to original
         self.current_stock_prices = self.stock_prices.copy()
+    
+    def _use_margin_buffer(self, bank, loss_amount):
+        """
+        Use margin as a buffer to absorb losses during devaluation.
+        
+        Args:
+            bank: Bank name
+            loss_amount: Amount of loss to absorb
+        
+        Returns:
+            actual_loss: Loss after margin absorption (may be less than loss_amount)
+            margin_used: Amount of margin consumed
+        """
+        available_margin = self.margin_states.get(bank, 0)
+        
+        if available_margin <= 0:
+            return loss_amount, 0
+        
+        # Margin can absorb up to 50% of the loss (partial protection)
+        max_absorption = loss_amount * 0.5
+        margin_used = min(available_margin, max_absorption)
+        
+        # Reduce available margin
+        self.margin_states[bank] -= margin_used
+        
+        # Actual loss is reduced by margin used
+        actual_loss = loss_amount - margin_used
+        
+        return actual_loss, margin_used
     
     def get_bank_health(self, bank):
         """
@@ -494,8 +581,11 @@ class BankingNetworkContagion:
                         creditor_assets = self.bank_states[creditor]['Total_Assets']
                         loss = min(loss, creditor_assets * 0.15)  # Cap at 15% per event
                         
-                        self.bank_states[creditor]['Total_Assets'] -= loss
-                        self.bank_states[creditor]['Equity'] -= loss
+                        # Use margin buffer for contagion losses
+                        actual_loss, _ = self._use_margin_buffer(creditor, loss)
+                        
+                        self.bank_states[creditor]['Total_Assets'] -= actual_loss
+                        self.bank_states[creditor]['Equity'] -= actual_loss
                         
                         if self.get_bank_health(creditor) < failure_threshold:
                             self.mark_bank_failed(creditor)
@@ -511,8 +601,11 @@ class BankingNetworkContagion:
                             borrower_assets = self.bank_states[borrower]['Total_Assets']
                             loss = min(loss, borrower_assets * 0.10)  # Cap at 10%
                             
-                            self.bank_states[borrower]['Total_Assets'] -= loss
-                            self.bank_states[borrower]['Equity'] -= loss
+                            # Use margin buffer for contagion losses
+                            actual_loss, _ = self._use_margin_buffer(borrower, loss)
+                            
+                            self.bank_states[borrower]['Total_Assets'] -= actual_loss
+                            self.bank_states[borrower]['Equity'] -= actual_loss
                             
                             if self.get_bank_health(borrower) < failure_threshold:
                                 self.mark_bank_failed(borrower)
@@ -571,9 +664,11 @@ class BankingNetworkContagion:
                 loss_billions = loss / 1e9  # Convert to billions
                 
                 if loss_billions > 0:
-                    banks_affected.append((bank, loss_billions))
-                    self.bank_states[bank]['Total_Assets'] -= loss_billions
-                    self.bank_states[bank]['Equity'] -= loss_billions
+                    # Use margin buffer to reduce loss
+                    actual_loss, margin_used = self._use_margin_buffer(bank, loss_billions)
+                    banks_affected.append((bank, actual_loss, margin_used))
+                    self.bank_states[bank]['Total_Assets'] -= actual_loss
+                    self.bank_states[bank]['Equity'] -= actual_loss
                     
                     if self.get_bank_health(bank) < failure_threshold:
                         self.mark_bank_failed(bank)
@@ -583,9 +678,10 @@ class BankingNetworkContagion:
         if banks_affected:
             banks_affected.sort(key=lambda x: -x[1])
             print(f"  Banks affected by {stock_ticker} devaluation:")
-            for bank, loss in banks_affected[:5]:
+            for bank, loss, margin_used in banks_affected[:5]:
                 status = " [FAILED]" if bank in initial_failures else ""
-                print(f"    {bank}: -${loss:.2f}B{status}")
+                margin_info = f" (margin buffer: ${margin_used:.2f}B)" if margin_used > 0 else ""
+                print(f"    {bank}: -${loss:.2f}B{margin_info}{status}")
             if len(banks_affected) > 5:
                 print(f"    ... and {len(banks_affected) - 5} more banks")
         
@@ -612,8 +708,11 @@ class BankingNetworkContagion:
                         creditor_assets = self.bank_states[creditor]['Total_Assets']
                         loss = min(loss, creditor_assets * 0.15)
                         
-                        self.bank_states[creditor]['Total_Assets'] -= loss
-                        self.bank_states[creditor]['Equity'] -= loss
+                        # Use margin buffer for contagion losses
+                        actual_loss, _ = self._use_margin_buffer(creditor, loss)
+                        
+                        self.bank_states[creditor]['Total_Assets'] -= actual_loss
+                        self.bank_states[creditor]['Equity'] -= actual_loss
                         
                         if self.get_bank_health(creditor) < failure_threshold:
                             self.mark_bank_failed(creditor)
@@ -629,8 +728,11 @@ class BankingNetworkContagion:
                             borrower_assets = self.bank_states[borrower]['Total_Assets']
                             loss = min(loss, borrower_assets * 0.10)
                             
-                            self.bank_states[borrower]['Total_Assets'] -= loss
-                            self.bank_states[borrower]['Equity'] -= loss
+                            # Use margin buffer for contagion losses
+                            actual_loss, _ = self._use_margin_buffer(borrower, loss)
+                            
+                            self.bank_states[borrower]['Total_Assets'] -= actual_loss
+                            self.bank_states[borrower]['Equity'] -= actual_loss
                             
                             if self.get_bank_health(borrower) < failure_threshold:
                                 self.mark_bank_failed(borrower)
@@ -673,7 +775,7 @@ class BankingNetworkContagion:
         print(f"\n  Devaluing {len(stock_devaluations)} stocks:")
         
         # Apply all stock devaluations
-        all_banks_affected = {}  # bank -> total_loss
+        all_banks_affected = {}  # bank -> {loss, margin_used}
         initial_failures = set()
         
         for stock_ticker, devaluation_pct in stock_devaluations.items():
@@ -693,11 +795,16 @@ class BankingNetworkContagion:
                     loss_billions = loss / 1e9  # Convert to billions
                     
                     if loss_billions > 0:
+                        # Use margin buffer to reduce loss
+                        actual_loss, margin_used = self._use_margin_buffer(bank, loss_billions)
+                        
                         if bank not in all_banks_affected:
-                            all_banks_affected[bank] = 0
-                        all_banks_affected[bank] += loss_billions
-                        self.bank_states[bank]['Total_Assets'] -= loss_billions
-                        self.bank_states[bank]['Equity'] -= loss_billions
+                            all_banks_affected[bank] = {'loss': 0, 'margin_used': 0}
+                        all_banks_affected[bank]['loss'] += actual_loss
+                        all_banks_affected[bank]['margin_used'] += margin_used
+                        
+                        self.bank_states[bank]['Total_Assets'] -= actual_loss
+                        self.bank_states[bank]['Equity'] -= actual_loss
         
         # Check for initial failures after all devaluations applied
         for bank in all_banks_affected:
@@ -707,11 +814,12 @@ class BankingNetworkContagion:
         
         # Print affected banks
         if all_banks_affected:
-            sorted_affected = sorted(all_banks_affected.items(), key=lambda x: -x[1])
+            sorted_affected = sorted(all_banks_affected.items(), key=lambda x: -x[1]['loss'])
             print(f"  Banks affected by stock devaluations:")
-            for bank, loss in sorted_affected[:5]:
+            for bank, data in sorted_affected[:5]:
                 status = " [FAILED]" if bank in initial_failures else ""
-                print(f"    {bank}: -${loss:.2f}B{status}")
+                margin_info = f" (margin buffer: ${data['margin_used']:.2f}B)" if data['margin_used'] > 0 else ""
+                print(f"    {bank}: -${data['loss']:.2f}B{margin_info}{status}")
             if len(sorted_affected) > 5:
                 print(f"    ... and {len(sorted_affected) - 5} more banks")
         
@@ -738,8 +846,11 @@ class BankingNetworkContagion:
                         creditor_assets = self.bank_states[creditor]['Total_Assets']
                         loss = min(loss, creditor_assets * 0.15)
                         
-                        self.bank_states[creditor]['Total_Assets'] -= loss
-                        self.bank_states[creditor]['Equity'] -= loss
+                        # Use margin buffer for contagion losses
+                        actual_loss, _ = self._use_margin_buffer(creditor, loss)
+                        
+                        self.bank_states[creditor]['Total_Assets'] -= actual_loss
+                        self.bank_states[creditor]['Equity'] -= actual_loss
                         
                         if self.get_bank_health(creditor) < failure_threshold:
                             self.mark_bank_failed(creditor)
@@ -755,8 +866,11 @@ class BankingNetworkContagion:
                             borrower_assets = self.bank_states[borrower]['Total_Assets']
                             loss = min(loss, borrower_assets * 0.10)
                             
-                            self.bank_states[borrower]['Total_Assets'] -= loss
-                            self.bank_states[borrower]['Equity'] -= loss
+                            # Use margin buffer for contagion losses
+                            actual_loss, _ = self._use_margin_buffer(borrower, loss)
+                            
+                            self.bank_states[borrower]['Total_Assets'] -= actual_loss
+                            self.bank_states[borrower]['Equity'] -= actual_loss
                             
                             if self.get_bank_health(borrower) < failure_threshold:
                                 self.mark_bank_failed(borrower)
@@ -974,15 +1088,23 @@ if __name__ == '__main__':
             print(f"  {bank}: Holdings=${val:.2f}B, Total_Assets=${bank_attrs[bank]['Total_Assets']:.2f}B, #Stocks={len(holdings[bank])}")
     print()
 
-    # Run contagion simulation with stock prices
-    contagion = BankingNetworkContagion(G, stock_prices)
+    # --- Generate margin requirements for each bank ---
+    # Margin is locked collateral that reduces liquidity but provides buffer during devaluation
+    # For now using random values (2-8% of Total_Assets)
+    # In production, this would be input by user or loaded from regulatory data
+    margin_requirements = generate_margin_requirements(bank_attrs, margin_ratio_range=(0.02, 0.08))
+    print_margin_summary(margin_requirements, bank_attrs)
+
+    # Run contagion simulation with stock prices and margin requirements
+    contagion = BankingNetworkContagion(G, stock_prices, margin_requirements)
     
     # Debug: Print initial health scores to verify they're reasonable
     print("Initial Bank Health Scores (sample):")
     sample_banks = ['JPM', 'BAC', 'GS', 'MS', 'IBOC', 'WFC']
     for b in sample_banks:
         if b in contagion.graph:
-            print(f"  {b}: {contagion.get_bank_health(b):.1f}/100")
+            margin = margin_requirements.get(b, 0)
+            print(f"  {b}: Health={contagion.get_bank_health(b):.1f}/100, Margin=${margin:.2f}B")
     print()
     
     # Get list of stock tickers for scenarios
