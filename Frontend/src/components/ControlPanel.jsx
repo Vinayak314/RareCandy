@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { getGreeting } from '../api';
 
-export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
+export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate, loading }) {
   const [mode, setMode] = useState('bank'); // 'bank' | 'stock'
+  const [simulationType, setSimulationType] = useState('instant'); // 'instant' | 'forecast'
   const [selectedBank, setSelectedBank] = useState('');
   const [bankShockPct, setBankShockPct] = useState(50);
   const [stockShocks, setStockShocks] = useState({});
@@ -25,16 +26,43 @@ export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
     });
   };
 
+  const addStockToShock = (ticker) => {
+    if (!stockShocks[ticker]) {
+      setStockShocks(prev => ({ ...prev, [ticker]: 20 })); // Default 20% shock
+    }
+    setStockSearch('');
+    setShowStockDropdown(false);
+  };
+
+  const removeStockFromShock = (ticker) => {
+    setStockShocks(prev => {
+      const next = { ...prev };
+      delete next[ticker];
+      return next;
+    });
+  };
+
   const handleRun = () => {
     if (mode === 'bank') {
       if (!selectedBank) return;
-      onSimulate({ type: 'bank', bank: selectedBank, shock_pct: bankShockPct, failure_threshold: threshold });
+      onSimulate({
+        type: 'bank',
+        simulationType,
+        bank: selectedBank,
+        shock_pct: bankShockPct,
+        failure_threshold: threshold
+      });
     } else {
       const activeShocks = Object.fromEntries(
         Object.entries(stockShocks).filter(([, v]) => v > 0)
       );
       if (Object.keys(activeShocks).length === 0) return;
-      onSimulate({ type: 'stock', shocks: activeShocks, failure_threshold: threshold });
+      onSimulate({
+        type: 'stock',
+        simulationType,
+        shocks: activeShocks,
+        failure_threshold: threshold
+      });
     }
   };
 

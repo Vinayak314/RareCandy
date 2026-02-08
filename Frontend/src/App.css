@@ -211,6 +211,67 @@
   color: #fff;
 }
 
+/* ─── Simulation Type Toggle ──────────────────────────────────── */
+.simulation-type-toggle {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+}
+
+.simulation-type-toggle label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #495057;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sim-type-buttons {
+  display: flex;
+  gap: 0;
+}
+
+.sim-type-buttons button {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  border: 2px solid #495057;
+  background: #fff;
+  color: #495057;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.sim-type-buttons button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.sim-type-buttons button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.sim-type-buttons button.active {
+  background: #495057;
+  color: #fff;
+}
+
+.sim-type-buttons button:hover:not(.active) {
+  background: #f8f9fa;
+}
+
+.sim-type-description {
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  color: #6c757d;
+  font-style: italic;
+  text-align: center;
+}
+
 .shock-config {
   margin-bottom: 0.75rem;
 }
@@ -319,7 +380,382 @@
   cursor: not-allowed;
 }
 
-/* ─── Simulation Results ───────────────────────────────────── */
+/* ─── Stock Search Dropdown ──────────────────────────────────── */
+.stock-search-container {
+  position: relative;
+  margin-bottom: 0.5rem;
+}
+
+.stock-search-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  box-sizing: border-box;
+}
+
+.stock-search-input:focus {
+  border-color: var(--color-primary-red);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(217, 26, 37, 0.1);
+}
+
+.stock-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.stock-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.15s;
+}
+
+.stock-dropdown-item:hover {
+  background: var(--color-bg-beige);
+}
+
+.stock-dropdown-item.selected {
+  background: #e8f5e9;
+}
+
+.stock-dropdown-item .ticker {
+  font-weight: 700;
+  min-width: 50px;
+}
+
+.stock-dropdown-item .price {
+  color: #666;
+  flex: 1;
+}
+
+.stock-dropdown-item .check {
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+.stock-dropdown-hint {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.7rem;
+  color: #888;
+  background: #f8f8f8;
+  text-align: center;
+  border-top: 1px solid #eee;
+}
+
+.selected-stocks {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #eee;
+}
+
+.stock-shock-row .remove-btn {
+  background: none;
+  border: none;
+  color: #c00;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.stock-shock-row .remove-btn:hover {
+  opacity: 1;
+}
+
+.stock-hint {
+  color: #888;
+  font-size: 0.8rem;
+  font-style: italic;
+  padding: 0.5rem 0;
+}
+
+/* ─── Forecast Results ──────────────────────────────────────────── */
+.forecast-results {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.forecast-results h2 {
+  margin-top: 0;
+  font-size: 1rem;
+  color: #1a1a1a;
+}
+
+.forecast-shock-summary {
+  background: var(--color-bg-beige);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.period-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.period-btn {
+  padding: 0.5rem;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.period-btn:hover {
+  border-color: var(--color-primary-red);
+}
+
+.period-btn.active {
+  border-color: var(--color-primary-red);
+  background: var(--color-primary-red);
+  color: #fff;
+}
+
+.period-btn.has-failures {
+  border-color: #FF9800;
+}
+
+.period-btn.active.has-failures {
+  background: #FF9800;
+  border-color: #FF9800;
+}
+
+.period-label {
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+.period-days {
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.period-failures {
+  font-size: 0.65rem;
+  margin-top: 0.2rem;
+}
+
+.forecast-details {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.forecast-details h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.forecast-details h4 {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 0.8rem;
+  color: #555;
+}
+
+.forecast-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.metric-card {
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.5rem;
+  text-align: center;
+  border: 2px solid #eee;
+}
+
+.metric-card.safe {
+  border-color: #4CAF50;
+  background: #e8f5e9;
+}
+
+.metric-card.warning {
+  border-color: #FF9800;
+  background: #fff8e1;
+}
+
+.metric-card.danger {
+  border-color: #D91A25;
+  background: #ffebee;
+}
+
+.metric-value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #1a1a1a;
+}
+
+.metric-label {
+  font-size: 0.65rem;
+  color: #666;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.target-bank-health {
+  margin: 0.75rem 0;
+}
+
+.target-bank-health label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.health-bar-full {
+  height: 12px;
+  background: #eee;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.health-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.5s ease;
+}
+
+.health-value {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: right;
+  margin-top: 0.2rem;
+}
+
+.stock-projections table,
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.stock-projections th,
+.comparison-table th {
+  text-align: left;
+  padding: 0.3rem;
+  border-bottom: 2px solid var(--color-primary-red);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.stock-projections td,
+.comparison-table td {
+  padding: 0.3rem;
+  border-bottom: 1px solid #eee;
+}
+
+.stock-projections .ticker {
+  font-weight: 700;
+}
+
+.stock-projections .shocked {
+  color: #D91A25;
+}
+
+.stock-projections .positive {
+  color: #4CAF50;
+  font-weight: 600;
+}
+
+.stock-projections .negative {
+  color: #D91A25;
+  font-weight: 600;
+}
+
+.comparison-table tr.selected {
+  background: var(--color-bg-beige);
+}
+
+.comparison-table td.safe {
+  color: #4CAF50;
+  font-weight: 600;
+}
+
+.comparison-table td.warning {
+  color: #FF9800;
+  font-weight: 600;
+}
+
+.comparison-table td.danger {
+  color: #D91A25;
+  font-weight: 600;
+}
+
+.failed-banks-forecast {
+  margin-top: 0.75rem;
+}
+
+.timeline-summary {
+  margin-top: 0.75rem;
+}
+
+.mini-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 60px;
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.5rem;
+  border: 1px solid #eee;
+}
+
+.chart-bar {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s;
+}
+
+.chart-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  color: #888;
+  margin-top: 0.2rem;
+}
+
+.period-comparison {
+  margin-top: 0.75rem;
+}
+
+.period-comparison h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #555;
+}
+
 .simulation-results {
   background: #fff;
   border: 1px solid #ddd;
