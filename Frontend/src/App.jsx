@@ -120,7 +120,7 @@ function App() {
       <header className="app-header">
         <div className="header-left">
           <h1>MARGIN CALL</h1>
-          <p>Spanking the Banking System | Systemic Risk & Contagion Dashboard</p>
+          <p>Systemic Risk & Contagion Dashboard</p>
         </div>
         <div className="header-right">
           <span className="stat">{banks.length} Banks</span>
