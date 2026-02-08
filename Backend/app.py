@@ -74,7 +74,7 @@ CONFIG = {
 
 # Paths
 BACKEND_DIR = os.path.dirname(__file__)
-DATASET_DIR = os.path.join(BACKEND_DIR, 'dataset')
+DATASET_DIR = os.path.join(BACKEND_DIR, 'ml/dataset')
 
 app = Flask(__name__)
 CORS(app)
@@ -780,9 +780,9 @@ def init_simulation(use_ml_margins=True):
     SIM_STATE['interbank_matrix'] = load_interbank_matrix(
         os.path.join(DATASET_DIR, 'us_banks_interbank_matrix.csv'))
 
-    print("[INIT] Loading stock prices (selecting 10 random)...")
+    print("[INIT] Loading stock prices (selecting 30 random)...")
     prices, ts = load_stock_prices(
-        os.path.join(DATASET_DIR, 'stocks_data_long.csv'), num_stocks=10)
+        os.path.join(DATASET_DIR, 'stocks_data_long.csv'), num_stocks=30)
     SIM_STATE['stock_prices'] = prices
     SIM_STATE['stock_timeseries'] = ts
 

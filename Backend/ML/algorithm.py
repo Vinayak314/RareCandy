@@ -53,7 +53,7 @@ def print_margin_summary(margin_requirements, bank_attributes):
     print()
 
 
-def load_stock_prices(csv_path, num_stocks=10):
+def load_stock_prices(csv_path, num_stocks=30):
     """
     Load stock data from CSV and pick `num_stocks` random unique tickers.
     Returns a dict {ticker: latest_close_price} for the selected stocks,
@@ -1107,7 +1107,7 @@ if __name__ == '__main__':
 
     # --- Load stocks and distribute shares among banks ---
     stock_prices, stock_timeseries = load_stock_prices(
-        './dataset/stocks_data_long.csv', num_stocks=10
+        './dataset/stocks_data_long.csv', num_stocks=30
     )
     holdings = distribute_shares(bank_attrs, stock_prices)
 
