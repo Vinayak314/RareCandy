@@ -1,0 +1,39 @@
+:root {
+  /* Extracted from User Theme: Red & Beige */
+  --color-primary-red: #D91A25; /* Bright, bold red from 'PITCH DECK' text */
+  --color-bg-beige: #F4EFEC;    /* Warm off-white/beige background */
+  --color-text-dark: #1A1A1A;   /* Nearly black for general text */
+  --color-text-light: #F4EFEC;  /* Light text for dark backgrounds */
+  
+  --font-family-base: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 2rem;
+  --spacing-xl: 4rem;
+}
+
+body {
+  background-color: var(--color-bg-beige);
+  color: var(--color-text-dark);
+  font-family: var(--font-family-base);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-primary-red);
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  font-weight: 800; /* Bold like the 'PITCH DECK' text */
+}
+
+a {
+  color: var(--color-primary-red);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
