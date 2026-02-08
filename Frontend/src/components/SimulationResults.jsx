@@ -25,21 +25,21 @@ export default function SimulationResults({ result }) {
           <div className="card-label">Banks Failed</div>
         </div>
         <div className="card">
-          <div className="card-value">${total_asset_loss.toFixed(1)}B</div>
+          <div className="card-value">${Number(total_asset_loss || 0).toFixed(1)}B</div>
           <div className="card-label">Total Asset Loss</div>
         </div>
         <div className="card">
-          <div className="card-value">{avg_survivor_health.toFixed(1)}</div>
+          <div className="card-value">{Number(avg_survivor_health || 0).toFixed(1)}</div>
           <div className="card-label">Avg Survivor Health</div>
         </div>
         <div className="card">
           <div className="card-value">{rounds}</div>
           <div className="card-label">Rounds to Stability</div>
         </div>
-        {ccp_payoff_B !== undefined && (
+        {ccp_payoff_B !== undefined && ccp_payoff_B !== null && (
           <div className={`card ccp-card ${ccp_payoff_B > 0 ? 'warning' : 'safe'}`}>
-            <div className="card-value">${ccp_payoff_B.toFixed(1)}B</div>
-            <div className="card-label">💰 CCP Payoff</div>
+            <div className="card-value">${Number(ccp_payoff_B).toFixed(1)}B</div>
+            <div className="card-label">CCP Payoff</div>
           </div>
         )}
       </div>
@@ -89,8 +89,8 @@ export default function SimulationResults({ result }) {
                       <span>{b.health.toFixed(1)}</span>
                     </div>
                   </td>
-                  <td>${b.asset_loss.toFixed(2)}B</td>
-                  <td>{b.failed ? '💀 FAILED' : '✅ OK'}</td>
+                  <td>${Number(b.asset_loss || 0).toFixed(2)}B</td>
+                  <td>{b.failed ? 'FAILED' : 'OK'}</td>
                 </tr>
               ))}
             </tbody>

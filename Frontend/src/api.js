@@ -64,3 +64,7 @@ export function forecastStockShock(shocks, failureThreshold = 20) {
 export function resetSimulation() {
   return fetchJSON('/simulate/reset', { method: 'POST' });
 }
+
+export function getGreeting() {
+  return fetchJSON('/greeting');
+}
