@@ -41,12 +41,6 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
-# Models
-models/*.pt
-models/*.pth
-models/*.h5
-!models/.gitkeep
-
 # Logs
 *.log
 logs/
