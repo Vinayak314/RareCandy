@@ -262,6 +262,29 @@ def load_bank_attributes(csv_path):
     return banks
 
 
+def load_interbank_matrix(csv_path):
+    """
+    Load interbank exposure matrix from CSV file.
+    
+    Args:
+        csv_path: Path to the interbank matrix CSV file
+    
+    Returns:
+        matrix: Dict of {from_bank: {to_bank: exposure_amount}}
+    """
+    matrix = {}
+    with open(csv_path, 'r') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        bank_names = header[1:]  # First column is row labels
+        for row in reader:
+            from_bank = row[0]
+            matrix[from_bank] = {}
+            for i, to_bank in enumerate(bank_names):
+                matrix[from_bank][to_bank] = float(row[i + 1])
+    return matrix
+
+
 def generate_random_graph_with_sccs(bank_attributes, num_sccs=5, prob_intra=0.5, prob_inter=0.1):
     """
     Generate graph with tiered core-periphery structure.
@@ -431,16 +454,18 @@ def generate_random_graph_with_sccs(bank_attributes, num_sccs=5, prob_intra=0.5,
 class BankingNetworkContagion:
     """Simulates contagion/cascade effects in a banking network."""
     
-    def __init__(self, graph, stock_prices=None, margin_requirements=None):
+    def __init__(self, graph, stock_prices=None, interbank_matrix=None, margin_requirements=None):
         """
         Args:
             graph: Dict of {bank_name: {neighbors: [...], attributes: {...}, holdings: {...}}}
             stock_prices: Dict of {ticker: price} for stock devaluation scenarios
+            interbank_matrix: Dict of {from_bank: {to_bank: exposure}} for interbank exposures
             margin_requirements: Dict of {bank_name: margin_amount} - locked collateral
         """
         self.graph = graph
         self.stock_prices = stock_prices.copy() if stock_prices else {}
         self.current_stock_prices = stock_prices.copy() if stock_prices else {}
+        self.interbank_matrix = interbank_matrix or {}
         self.margin_requirements = margin_requirements.copy() if margin_requirements else {}
         self.bank_states = {}  # Track current health of each bank
         self.margin_states = {}  # Track remaining margin for each bank
@@ -948,13 +973,24 @@ class BankingNetworkContagion:
         interbank_liab = self.graph[bank]['attributes']['Interbank_Liabilities']
         return asset_loss_ratio * interbank_liab
     
+    def _get_interbank_exposure(self, from_bank, to_bank):
+        """Get the actual interbank exposure from the matrix if available."""
+        return self.interbank_matrix.get(from_bank, {}).get(to_bank, 0)
+    
     def _get_exposure(self, from_bank, to_bank):
         """
         Get the fraction of 'impact' that to_bank actually absorbs from from_bank's failure.
         
-        Key principle: A large bank's exposure to a small bank is limited by the small bank's
-        size. A small bank cannot cause losses larger than its own interbank footprint.
+        If interbank_matrix is available, use actual exposure values.
+        Otherwise, fall back to heuristic estimation based on bank sizes.
         """
+        # If we have actual interbank exposure data, use it
+        if self.interbank_matrix:
+            exposure = self._get_interbank_exposure(from_bank, to_bank)
+            if exposure > 0:
+                return exposure
+        
+        # Fall back to heuristic estimation
         # Use original (pre-shock) sizes for stable exposure calculation
         from_original = self.graph[from_bank]['attributes']['Total_Assets']
         to_original = self.graph[to_bank]['attributes']['Total_Assets']
@@ -1065,6 +1101,10 @@ if __name__ == '__main__':
     bank_attrs = load_bank_attributes('./dataset/us_banks_top50_nodes_final.csv')
     G = generate_random_graph_with_sccs(bank_attrs, num_sccs=4, prob_intra=0.4, prob_inter=0.05)
 
+    # --- Load interbank matrix for exposure calculations ---
+    interbank_matrix = load_interbank_matrix('./dataset/us_banks_interbank_matrix.csv')
+    print(f"Loaded interbank matrix with {len(interbank_matrix)} banks")
+
     # --- Load stocks and distribute shares among banks ---
     stock_prices, stock_timeseries = load_stock_prices(
         './dataset/stocks_data_long.csv', num_stocks=10
@@ -1095,8 +1135,8 @@ if __name__ == '__main__':
     margin_requirements = generate_margin_requirements(bank_attrs, margin_ratio_range=(0.02, 0.08))
     print_margin_summary(margin_requirements, bank_attrs)
 
-    # Run contagion simulation with stock prices and margin requirements
-    contagion = BankingNetworkContagion(G, stock_prices, margin_requirements)
+    # Run contagion simulation with stock prices, interbank matrix, and margin requirements
+    contagion = BankingNetworkContagion(G, stock_prices, interbank_matrix, margin_requirements)
     
     # Debug: Print initial health scores to verify they're reasonable
     print("Initial Bank Health Scores (sample):")

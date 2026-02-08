@@ -27,7 +27,8 @@ except ImportError:
 # Model architecture matching the trained model
 STATE_SIZE = 15
 ACTION_SIZE = 5
-MARGIN_LEVELS = [0.05, 0.10, 0.20, 0.35, None]  # None = reject
+MARGIN_LEVELS = [i/100 for i in range(1,101)]  
+MARGIN_LEVELS = [None] + MARGIN_LEVELS # None for reject, then 1% to 100% in 1% increments
 
 # Default model path relative to this file
 DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'ccp_policy.pt')

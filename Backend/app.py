@@ -28,6 +28,14 @@ except ImportError as e:
     print(f"⚠️  ML model integration not available: {e}")
     ML_MODEL_AVAILABLE = False
 
+# Import shared algorithm functions
+from ML.algorithm import (
+    load_bank_attributes,
+    load_interbank_matrix,
+    load_stock_prices,
+    distribute_shares,
+    generate_margin_requirements,
+)
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -435,104 +443,8 @@ class BankShockSimulator:
 
 
 # ─── Data loading functions ───────────────────────────────────────────────────
-
-def load_bank_attributes(csv_path):
-    banks = {}
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            bank_name = row['Bank']
-            banks[bank_name] = {
-                'Total_Assets': float(row['Total_Assets']),
-                'Equity': float(row['Equity']),
-                'Total_Liabilities': float(row['Total_Liabilities']),
-                'HQLA': float(row['HQLA']),
-                'Net_Outflows_30d': float(row['Net_Outflows_30d']),
-                'Est_CDS_Spread': float(row['Est_CDS_Spread']),
-                'Stock_Volatility': float(row['Stock_Volatility']),
-                'Interbank_Assets': float(row['Interbank_Assets']),
-                'Interbank_Liabilities': float(row['Interbank_Liabilities']),
-                'LR': float(row['LR']),
-                'LCR': float(row['LCR']),
-            }
-    return banks
-
-
-def load_interbank_matrix(csv_path):
-    matrix = {}
-    with open(csv_path, 'r') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        bank_names = header[1:]
-        for row in reader:
-            from_bank = row[0]
-            matrix[from_bank] = {}
-            for i, to_bank in enumerate(bank_names):
-                matrix[from_bank][to_bank] = float(row[i + 1])
-    return matrix
-
-
-def load_stock_prices(csv_path, num_stocks=10):
-    all_data = defaultdict(list)
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            ticker = row['Ticker']
-            all_data[ticker].append({
-                'Date': row['Date'],
-                'Open': float(row['Open']),
-                'High': float(row['High']),
-                'Low': float(row['Low']),
-                'Close': float(row['Close']),
-                'Volume': float(row['Volume']),
-            })
-
-    viable_tickers = [
-        t for t in all_data if all_data[t][-1]['Close'] >= 5.0
-    ]
-    selected_tickers = random.sample(viable_tickers, min(num_stocks, len(viable_tickers)))
-
-    selected_prices = {}
-    selected_timeseries = {}
-    for ticker in selected_tickers:
-        ts = sorted(all_data[ticker], key=lambda x: x['Date'])
-        selected_prices[ticker] = ts[-1]['Close']
-        selected_timeseries[ticker] = ts
-
-    return selected_prices, selected_timeseries
-
-
-def distribute_shares(bank_attributes, stock_prices):
-    tickers = list(stock_prices.keys())
-    num_stocks = len(tickers)
-    holdings = {}
-
-    all_assets = [a['Total_Assets'] for a in bank_attributes.values()]
-    max_assets, min_assets = max(all_assets), min(all_assets)
-    asset_range = max_assets - min_assets if max_assets > min_assets else 1
-
-    for bank_name, attrs in bank_attributes.items():
-        total_assets = attrs['Total_Assets']
-        size_pct = (total_assets - min_assets) / asset_range
-
-        base_alpha = 0.1 + size_pct * 1.9
-        if size_pct < 0.3:
-            alphas = [base_alpha * 0.3] * num_stocks
-            alphas[random.randint(0, num_stocks - 1)] = base_alpha * 5.0
-        elif size_pct < 0.6:
-            alphas = [base_alpha] * num_stocks
-            alphas[random.randint(0, num_stocks - 1)] = base_alpha * 2.0
-        else:
-            alphas = [base_alpha] * num_stocks
-
-        weights = np.random.dirichlet(alphas)
-        bh = {}
-        for i, ticker in enumerate(tickers):
-            allocation = total_assets * weights[i]
-            bh[ticker] = (allocation * 1e9) / stock_prices[ticker]
-        holdings[bank_name] = bh
-
-    return holdings
+# Note: load_bank_attributes, load_interbank_matrix, load_stock_prices, 
+# and distribute_shares are imported from ML.algorithm
 
 
 def build_graph(bank_attributes, interbank_matrix):
@@ -849,24 +761,7 @@ class BankingNetworkContagion:
 
 
 # ─── Initialization ──────────────────────────────────────────────────────────
-
-def generate_random_margin_requirements(bank_attributes, margin_ratio_range=(0.02, 0.08)):
-    """
-    Generate random margin requirements for each bank (fallback method).
-    
-    Args:
-        bank_attributes: dict {bank_name: {Total_Assets: ..., ...}}
-        margin_ratio_range: (min, max) ratio of Total_Assets to hold as margin
-    
-    Returns:
-        margin_requirements: dict {bank_name: margin_amount_in_billions}
-    """
-    margin_requirements = {}
-    for bank_name, attrs in bank_attributes.items():
-        total_assets = attrs['Total_Assets']
-        margin_ratio = random.uniform(margin_ratio_range[0], margin_ratio_range[1])
-        margin_requirements[bank_name] = total_assets * margin_ratio
-    return margin_requirements
+# Note: generate_margin_requirements is imported from ML.algorithm
 
 
 def init_simulation(use_ml_margins=True):
@@ -919,10 +814,10 @@ def init_simulation(use_ml_margins=True):
             print(f"[INIT] ⚠️  ML margin generation failed: {e}")
             print("[INIT] Falling back to random margins...")
             SIM_STATE['use_ml_margins'] = False
-            SIM_STATE['margin_requirements'] = generate_random_margin_requirements(SIM_STATE['bank_attrs'])
+            SIM_STATE['margin_requirements'] = generate_margin_requirements(SIM_STATE['bank_attrs'])
     else:
         print("[INIT] Using random margin requirements (ML not available or disabled)")
-        SIM_STATE['margin_requirements'] = generate_random_margin_requirements(SIM_STATE['bank_attrs'])
+        SIM_STATE['margin_requirements'] = generate_margin_requirements(SIM_STATE['bank_attrs'])
 
     # Create contagion simulator with margins
     SIM_STATE['contagion'] = BankingNetworkContagion(
@@ -1240,13 +1135,13 @@ def regenerate_margins():
             SIM_STATE['use_ml_margins'] = True
             method = 'ML model'
         except Exception as e:
-            SIM_STATE['margin_requirements'] = generate_random_margin_requirements(
+            SIM_STATE['margin_requirements'] = generate_margin_requirements(
                 SIM_STATE['bank_attrs']
             )
             SIM_STATE['use_ml_margins'] = False
             method = f'random (ML failed: {e})'
     else:
-        SIM_STATE['margin_requirements'] = generate_random_margin_requirements(
+        SIM_STATE['margin_requirements'] = generate_margin_requirements(
             SIM_STATE['bank_attrs']
         )
         SIM_STATE['use_ml_margins'] = False
