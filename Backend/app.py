@@ -74,7 +74,7 @@ CONFIG = {
 
 # Paths
 BACKEND_DIR = os.path.dirname(__file__)
-DATASET_DIR = os.path.join(BACKEND_DIR, 'ml/dataset')
+DATASET_DIR = os.path.join(BACKEND_DIR, 'ML/dataset')
 
 app = Flask(__name__)
 CORS(app)
@@ -812,12 +812,12 @@ def init_simulation(use_ml_margins=True):
             print(f"[INIT] ✅ ML-based margins generated for {len(SIM_STATE['margin_requirements'])} banks")
         except Exception as e:
             print(f"[INIT] ⚠️  ML margin generation failed: {e}")
-            print("[INIT] Falling back to random margins...")
+            print("[INIT] Falling back to no margins...")
             SIM_STATE['use_ml_margins'] = False
-            SIM_STATE['margin_requirements'] = generate_margin_requirements(SIM_STATE['bank_attrs'])
+            SIM_STATE['margin_requirements'] = {bank: 0.0 for bank in SIM_STATE['bank_attrs']}
     else:
-        print("[INIT] Using random margin requirements (ML not available or disabled)")
-        SIM_STATE['margin_requirements'] = generate_margin_requirements(SIM_STATE['bank_attrs'])
+        print("[INIT] No margin requirements (ML not available or disabled)")
+        SIM_STATE['margin_requirements'] = {bank: 0.0 for bank in SIM_STATE['bank_attrs']}
 
     # Create contagion simulator with margins
     SIM_STATE['contagion'] = BankingNetworkContagion(
@@ -1135,17 +1135,14 @@ def regenerate_margins():
             SIM_STATE['use_ml_margins'] = True
             method = 'ML model'
         except Exception as e:
-            SIM_STATE['margin_requirements'] = generate_margin_requirements(
-                SIM_STATE['bank_attrs']
-            )
+            SIM_STATE['margin_requirements'] = {bank: 0.0 for bank in SIM_STATE['bank_attrs']}
             SIM_STATE['use_ml_margins'] = False
-            method = f'random (ML failed: {e})'
+            method = f'none (ML failed: {e})'
     else:
-        SIM_STATE['margin_requirements'] = generate_margin_requirements(
-            SIM_STATE['bank_attrs']
-        )
+        # No margins - set all to 0
+        SIM_STATE['margin_requirements'] = {bank: 0.0 for bank in SIM_STATE['bank_attrs']}
         SIM_STATE['use_ml_margins'] = False
-        method = 'random'
+        method = 'none'
     
     # Update contagion simulator with new margins
     SIM_STATE['contagion'].margin_requirements = SIM_STATE['margin_requirements'].copy()
