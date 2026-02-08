@@ -107,7 +107,10 @@ function App() {
   if (initializing) {
     return (
       <div className="loading-screen">
-        <h1>Financial Network Simulation</h1>
+        <div className="loading-brand">
+          <h1 className="brand-title">MARGIN CALL</h1>
+          <p className="brand-tagline">Spanking the Banking System</p>
+        </div>
         <p>Connecting to simulation backend...</p>
         <div className="spinner" />
       </div>
@@ -119,8 +122,8 @@ function App() {
       {/* Header */}
       <header className="app-header">
         <div className="header-left">
-          <h1>Financial Network Simulation</h1>
-          <p>Systemic Risk &amp; Contagion Dashboard</p>
+          <h1 className="brand-title">MARGIN CALL</h1>
+          <p className="brand-tagline">Spanking the Banking System <span className="tagline-separator">|</span> <span className="tagline-subtitle">Systemic Risk & Contagion Dashboard</span></p>
         </div>
         <div className="header-right">
           <span className="stat">{banks.length} Banks</span>
