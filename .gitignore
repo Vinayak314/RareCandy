@@ -1,4 +1,14 @@
-# Python
+# General
+.DS_Store
+Thumbs.db
+*.log
+logs/
+
+# Environment Variables
+.env
+Backend/.env
+
+# Python (Global)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,38 +29,43 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual Environment
 venv/
 ENV/
 env/
 
+# Jupyter Notebook
+.ipynb_checkpoints
+
 # IDE
 .vscode/
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
 *~
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Frontend
+node_modules
+dist-ssr
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Data
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-# Logs
-*.log
-logs/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment variables
-.env
+# ML Data & Models (Preserving original paths relative to ML/)
+ML/data/raw/*
+ML/data/processed/*
+!ML/data/raw/.gitkeep
+!ML/data/processed/.gitkeep
+ML/models/*.pth
+ML/models/*.h5
+!ML/models/.gitkeep
 
 # Testing
 .coverage
