@@ -20,6 +20,14 @@ from flask_cors import CORS
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
+# ML model integration
+try:
+    from ML.ccp_model import CCPMarginPredictor, get_margin_predictor, MARGIN_LEVELS
+    ML_MODEL_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️  ML model integration not available: {e}")
+    ML_MODEL_AVAILABLE = False
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -63,6 +71,72 @@ DATASET_DIR = os.path.join(BACKEND_DIR, 'dataset')
 app = Flask(__name__)
 CORS(app)
 
+# Load Featherless API Key
+FLESS_KEY = os.getenv('FLESS')
+if not FLESS_KEY:
+    # Try loading from .env file manually if not in env
+    try:
+        with open(os.path.join(BACKEND_DIR, '.env'), 'r') as f:
+            for line in f:
+                if line.startswith('FLESS='):
+                    FLESS_KEY = line.strip().split('=', 1)[1]
+                    break
+    except Exception:
+        pass
+
+import requests
+import datetime
+
+@app.route('/api/greeting', methods=['GET'])
+def get_greeting():
+    """Get a dynamic greeting from Featherless.ai based on time of day."""
+    current_hour = datetime.datetime.now().hour
+    if 5 <= current_hour < 12:
+        time_of_day = "morning"
+    elif 12 <= current_hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= current_hour < 22:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+
+    if not FLESS_KEY:
+        return jsonify({'greeting': f"Good {time_of_day}!"})
+
+    try:
+        # Using Featherless.ai API (Assuming OpenAI-compatible format as is common)
+        # If specific endpoint differs, this will need adjustment.
+        # Based on standard interference API patterns.
+        response = requests.post(
+            "https://api.featherless.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {FLESS_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-ai/DeepSeek-V3-0324", # Using model from provided docs
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant. Keep it very short."},
+                    {"role": "user", "content": f"Give me a short, professional greeting for a financial simulation dashboard user. It is currently {time_of_day}. Max 10 words."}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 50
+            },
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            greeting = data['choices'][0]['message']['content'].strip().replace('"', '')
+            return jsonify({'greeting': greeting})
+        else:
+            print(f"Featherless API Error: {response.text}")
+            return jsonify({'greeting': f"Good {time_of_day}!"})
+            
+    except Exception as e:
+        print(f"Error fetching greeting: {e}")
+        return jsonify({'greeting': f"Good {time_of_day}!"})
+
 # ─── Global simulation state ─────────────────────────────────────────────────
 SIM_STATE = {
     'bank_attrs': None,
@@ -73,6 +147,10 @@ SIM_STATE = {
     'contagion': None,
     'interbank_matrix': None,
     'network_simulator': None,
+    # ML model integration
+    'margin_requirements': None,
+    'margin_predictor': None,
+    'use_ml_margins': False,
 }
 
 
@@ -484,12 +562,14 @@ def build_graph(bank_attributes, interbank_matrix):
 # ─── Contagion engine ─────────────────────────────────────────────────────────
 
 class BankingNetworkContagion:
-    def __init__(self, graph, stock_prices=None, interbank_matrix=None):
+    def __init__(self, graph, stock_prices=None, interbank_matrix=None, margin_requirements=None):
         self.graph = graph
         self.stock_prices = stock_prices.copy() if stock_prices else {}
         self.current_stock_prices = stock_prices.copy() if stock_prices else {}
         self.interbank_matrix = interbank_matrix or {}
+        self.margin_requirements = margin_requirements.copy() if margin_requirements else {}
         self.bank_states = {}
+        self.margin_states = {}  # Track remaining margin for each bank
         self.failed_banks = set()
         self.history = []
         self.initialize_states()
@@ -497,7 +577,41 @@ class BankingNetworkContagion:
     def initialize_states(self):
         for bank in self.graph:
             self.bank_states[bank] = self.graph[bank]['attributes'].copy()
+            # Initialize margin: locked amount that can be used as buffer during stress
+            self.margin_states[bank] = self.margin_requirements.get(bank, 0)
+            # Reduce available HQLA by margin (margin is locked)
+            if self.margin_states[bank] > 0:
+                self.bank_states[bank]['HQLA'] = max(0, self.bank_states[bank]['HQLA'] - self.margin_states[bank])
         self.current_stock_prices = self.stock_prices.copy()
+    
+    def _use_margin_buffer(self, bank, loss_amount):
+        """
+        Use margin as a buffer to absorb losses during devaluation.
+        
+        Args:
+            bank: Bank name
+            loss_amount: Amount of loss to absorb
+        
+        Returns:
+            actual_loss: Loss after margin absorption (may be less than loss_amount)
+            margin_used: Amount of margin consumed
+        """
+        available_margin = self.margin_states.get(bank, 0)
+        
+        if available_margin <= 0:
+            return loss_amount, 0
+        
+        # Margin can absorb up to 50% of the loss (partial protection)
+        max_absorption = loss_amount * 0.5
+        margin_used = min(available_margin, max_absorption)
+        
+        # Reduce available margin
+        self.margin_states[bank] -= margin_used
+        
+        # Actual loss is reduced by margin used
+        actual_loss = loss_amount - margin_used
+        
+        return actual_loss, margin_used
 
     def get_bank_health(self, bank):
         if bank in self.failed_banks:
@@ -561,8 +675,10 @@ class BankingNetworkContagion:
                         creditor_assets = self.bank_states[neighbor]['Total_Assets']
                         loss = min(loss, creditor_assets * 0.15)
 
-                        self.bank_states[neighbor]['Total_Assets'] -= loss
-                        self.bank_states[neighbor]['Equity'] -= loss
+                        # Use margin buffer to absorb losses
+                        actual_loss, _ = self._use_margin_buffer(neighbor, loss)
+                        self.bank_states[neighbor]['Total_Assets'] -= actual_loss
+                        self.bank_states[neighbor]['Equity'] -= actual_loss
 
                         if self.get_bank_health(neighbor) < failure_threshold:
                             self.mark_bank_failed(neighbor)
@@ -576,8 +692,10 @@ class BankingNetworkContagion:
                             b_assets = self.bank_states[borrower]['Total_Assets']
                             loss = min(loss, b_assets * 0.10)
 
-                            self.bank_states[borrower]['Total_Assets'] -= loss
-                            self.bank_states[borrower]['Equity'] -= loss
+                            # Use margin buffer to absorb losses
+                            actual_loss, _ = self._use_margin_buffer(borrower, loss)
+                            self.bank_states[borrower]['Total_Assets'] -= actual_loss
+                            self.bank_states[borrower]['Equity'] -= actual_loss
 
                             if self.get_bank_health(borrower) < failure_threshold:
                                 self.mark_bank_failed(borrower)
@@ -614,8 +732,10 @@ class BankingNetworkContagion:
                     shares = holdings[ticker]
                     loss_b = shares * (old_price - new_price) / 1e9
                     if loss_b > 0:
-                        self.bank_states[bank]['Total_Assets'] -= loss_b
-                        self.bank_states[bank]['Equity'] -= loss_b
+                        # Use margin buffer to absorb losses
+                        actual_loss, _ = self._use_margin_buffer(bank, loss_b)
+                        self.bank_states[bank]['Total_Assets'] -= actual_loss
+                        self.bank_states[bank]['Equity'] -= actual_loss
 
         for bank in self.graph:
             if self.get_bank_health(bank) < failure_threshold:
@@ -640,8 +760,10 @@ class BankingNetworkContagion:
                         exposure = self._get_interbank_exposure(failed_bank, neighbor)
                         loss = asset_loss_ratio * exposure * round_dampening
                         loss = min(loss, self.bank_states[neighbor]['Total_Assets'] * 0.15)
-                        self.bank_states[neighbor]['Total_Assets'] -= loss
-                        self.bank_states[neighbor]['Equity'] -= loss
+                        # Use margin buffer to absorb losses
+                        actual_loss, _ = self._use_margin_buffer(neighbor, loss)
+                        self.bank_states[neighbor]['Total_Assets'] -= actual_loss
+                        self.bank_states[neighbor]['Equity'] -= actual_loss
                         if self.get_bank_health(neighbor) < failure_threshold:
                             self.mark_bank_failed(neighbor)
                             newly_failed.add(neighbor)
@@ -652,8 +774,10 @@ class BankingNetworkContagion:
                             exposure = self._get_interbank_exposure(borrower, failed_bank)
                             loss = asset_loss_ratio * exposure * 0.3 * round_dampening
                             loss = min(loss, self.bank_states[borrower]['Total_Assets'] * 0.10)
-                            self.bank_states[borrower]['Total_Assets'] -= loss
-                            self.bank_states[borrower]['Equity'] -= loss
+                            # Use margin buffer to absorb losses
+                            actual_loss, _ = self._use_margin_buffer(borrower, loss)
+                            self.bank_states[borrower]['Total_Assets'] -= actual_loss
+                            self.bank_states[borrower]['Equity'] -= actual_loss
                             if self.get_bank_health(borrower) < failure_threshold:
                                 self.mark_bank_failed(borrower)
                                 newly_failed.add(borrower)
@@ -709,25 +833,50 @@ class BankingNetworkContagion:
             })
 
         return {
-            'num_failed': num_failed,
-            'total_banks': num_total,
-            'collapse_ratio': round(num_failed / num_total, 4),
-            'total_asset_loss': round(self._total_loss(), 2),
-            'avg_survivor_health': round(avg_health, 2),
-            'rounds': len(self.history),
-            'system_collapsed': num_failed / num_total > 0.5,
+            'num_failed': int(num_failed),
+            'total_banks': int(num_total),
+            'collapse_ratio': float(round(num_failed / num_total, 4)),
+            'total_asset_loss': float(round(self._total_loss(), 2)),
+            'avg_survivor_health': float(round(avg_health, 2)),
+            'rounds': int(len(self.history)),
+            'system_collapsed': bool(num_failed / num_total > 0.5),
             'failed_banks': list(self.failed_banks),
             'contagion_history': self.history,
             'banks': banks_detail,
-            'ccp_payoff_B': round(ccp_payoff, 2),
+            'ccp_payoff_B': float(round(ccp_payoff, 2)),
             'payoff_breakdown': payoff_breakdown,
         }
 
 
 # ─── Initialization ──────────────────────────────────────────────────────────
 
-def init_simulation():
-    """Load all data and build the simulation state once at startup."""
+def generate_random_margin_requirements(bank_attributes, margin_ratio_range=(0.02, 0.08)):
+    """
+    Generate random margin requirements for each bank (fallback method).
+    
+    Args:
+        bank_attributes: dict {bank_name: {Total_Assets: ..., ...}}
+        margin_ratio_range: (min, max) ratio of Total_Assets to hold as margin
+    
+    Returns:
+        margin_requirements: dict {bank_name: margin_amount_in_billions}
+    """
+    margin_requirements = {}
+    for bank_name, attrs in bank_attributes.items():
+        total_assets = attrs['Total_Assets']
+        margin_ratio = random.uniform(margin_ratio_range[0], margin_ratio_range[1])
+        margin_requirements[bank_name] = total_assets * margin_ratio
+    return margin_requirements
+
+
+def init_simulation(use_ml_margins=True):
+    """
+    Load all data and build the simulation state once at startup.
+    
+    Args:
+        use_ml_margins: If True, use ML model for margin requirements.
+                        If False, use random margins.
+    """
     print("[INIT] Loading bank attributes...")
     SIM_STATE['bank_attrs'] = load_bank_attributes(
         os.path.join(DATASET_DIR, 'us_banks_top50_nodes_final.csv'))
@@ -752,8 +901,36 @@ def init_simulation():
         if bank in SIM_STATE['holdings']:
             SIM_STATE['graph'][bank]['holdings'] = SIM_STATE['holdings'][bank]
 
+    # --- ML Model Integration for Margin Requirements ---
+    print("[INIT] Setting up margin requirements...")
+    SIM_STATE['use_ml_margins'] = use_ml_margins and ML_MODEL_AVAILABLE
+    
+    if SIM_STATE['use_ml_margins']:
+        try:
+            print("[INIT] Loading CCP ML model for margin predictions...")
+            SIM_STATE['margin_predictor'] = get_margin_predictor(
+                os.path.join(BACKEND_DIR, 'ML', 'ccp_policy.pt')
+            )
+            SIM_STATE['margin_requirements'] = SIM_STATE['margin_predictor'].generate_margin_requirements(
+                SIM_STATE['bank_attrs']
+            )
+            print(f"[INIT] ✅ ML-based margins generated for {len(SIM_STATE['margin_requirements'])} banks")
+        except Exception as e:
+            print(f"[INIT] ⚠️  ML margin generation failed: {e}")
+            print("[INIT] Falling back to random margins...")
+            SIM_STATE['use_ml_margins'] = False
+            SIM_STATE['margin_requirements'] = generate_random_margin_requirements(SIM_STATE['bank_attrs'])
+    else:
+        print("[INIT] Using random margin requirements (ML not available or disabled)")
+        SIM_STATE['margin_requirements'] = generate_random_margin_requirements(SIM_STATE['bank_attrs'])
+
+    # Create contagion simulator with margins
     SIM_STATE['contagion'] = BankingNetworkContagion(
-        SIM_STATE['graph'], prices, SIM_STATE['interbank_matrix'])
+        SIM_STATE['graph'], 
+        prices, 
+        SIM_STATE['interbank_matrix'],
+        SIM_STATE['margin_requirements']
+    )
 
     # Also initialize NetworkSimulator for advanced shock simulation
     SIM_STATE['network_simulator'] = NetworkSimulator(
@@ -763,21 +940,25 @@ def init_simulation():
     )
 
     print(f"[INIT] Ready — {len(SIM_STATE['bank_attrs'])} banks, "
-          f"{len(prices)} stocks")
+          f"{len(prices)} stocks, ML margins: {SIM_STATE['use_ml_margins']}")
 
 
 # ─── API Routes ───────────────────────────────────────────────────────────────
 
 @app.route('/api/banks', methods=['GET'])
 def get_banks():
-    """Return list of banks with attributes and health scores."""
+    """Return list of banks with attributes, health scores, and margin requirements."""
     contagion = SIM_STATE['contagion']
     contagion.initialize_states()
     contagion.failed_banks = set()
 
+    margins = SIM_STATE.get('margin_requirements', {})
+    
     banks = []
     for name, attrs in SIM_STATE['bank_attrs'].items():
         health = contagion.get_bank_health(name)
+        margin = margins.get(name, 0)
+        margin_pct = (margin / attrs['Total_Assets'] * 100) if attrs['Total_Assets'] > 0 else 0
         banks.append({
             'id': name,
             'total_assets': attrs['Total_Assets'],
@@ -788,6 +969,8 @@ def get_banks():
             'volatility': attrs['Stock_Volatility'],
             'interbank_assets': attrs['Interbank_Assets'],
             'interbank_liabilities': attrs['Interbank_Liabilities'],
+            'margin_B': round(margin, 3),
+            'margin_pct': round(margin_pct, 2),
         })
 
     banks.sort(key=lambda b: -b['total_assets'])
@@ -943,8 +1126,201 @@ def _get_post_sim_network(contagion):
 @app.route('/api/simulate/reset', methods=['POST'])
 def reset_simulation():
     """Re-initialize the simulation with fresh random stock selection & holdings."""
-    init_simulation()
-    return jsonify({'status': 'ok', 'message': 'Simulation reset with new random stocks'})
+    data = request.get_json() or {}
+    use_ml = data.get('use_ml_margins', True)
+    init_simulation(use_ml_margins=use_ml)
+    return jsonify({
+        'status': 'ok', 
+        'message': 'Simulation reset with new random stocks',
+        'ml_margins_enabled': SIM_STATE['use_ml_margins']
+    })
+
+
+# ─── ML Model API Routes ──────────────────────────────────────────────────────
+
+@app.route('/api/ml/status', methods=['GET'])
+def get_ml_status():
+    """Get the status of the ML model integration."""
+    return jsonify({
+        'ml_available': ML_MODEL_AVAILABLE,
+        'ml_margins_enabled': SIM_STATE.get('use_ml_margins', False),
+        'predictor_loaded': SIM_STATE.get('margin_predictor') is not None,
+        'model_loaded': (
+            SIM_STATE.get('margin_predictor') is not None and 
+            SIM_STATE['margin_predictor'].model_loaded
+        )
+    })
+
+
+@app.route('/api/ml/margins', methods=['GET'])
+def get_margin_requirements():
+    """
+    Get current margin requirements for all banks.
+    Shows whether ML or random margins are being used.
+    """
+    margins = SIM_STATE.get('margin_requirements', {})
+    bank_attrs = SIM_STATE.get('bank_attrs', {})
+    
+    result = []
+    for bank_name, margin in margins.items():
+        attrs = bank_attrs.get(bank_name, {})
+        total_assets = attrs.get('Total_Assets', 0)
+        margin_pct = (margin / total_assets * 100) if total_assets > 0 else 0
+        result.append({
+            'bank': bank_name,
+            'margin_B': round(margin, 3),
+            'margin_pct': round(margin_pct, 2),
+            'total_assets_B': round(total_assets, 2)
+        })
+    
+    result.sort(key=lambda x: -x['margin_B'])
+    
+    return jsonify({
+        'ml_margins_enabled': SIM_STATE.get('use_ml_margins', False),
+        'total_margin_B': round(sum(margins.values()), 2),
+        'margins': result
+    })
+
+
+@app.route('/api/ml/margins/<bank_name>', methods=['GET'])
+def get_bank_margin_details(bank_name):
+    """
+    Get detailed margin decision for a specific bank.
+    Includes Q-values if ML model is used.
+    """
+    if bank_name not in SIM_STATE.get('bank_attrs', {}):
+        return jsonify({'error': f'Bank {bank_name} not found'}), 404
+    
+    predictor = SIM_STATE.get('margin_predictor')
+    if predictor is None:
+        margin = SIM_STATE.get('margin_requirements', {}).get(bank_name, 0)
+        attrs = SIM_STATE.get('bank_attrs', {}).get(bank_name, {})
+        return jsonify({
+            'bank': bank_name,
+            'margin_B': round(margin, 3),
+            'margin_ratio': margin / max(attrs.get('Total_Assets', 1), 1),
+            'model_used': False,
+            'reason': 'ML model not available'
+        })
+    
+    # Get detailed decision from ML model
+    details = predictor.get_margin_decision_details(
+        SIM_STATE['bank_attrs'],
+        bank_name,
+        set(),  # No failed banks for initial assessment
+        None
+    )
+    
+    return jsonify(details)
+
+
+@app.route('/api/ml/regenerate-margins', methods=['POST'])
+def regenerate_margins():
+    """
+    Regenerate margin requirements using the ML model (or fallback).
+    Optionally can specify to use ML or random margins.
+    
+    Body: { "use_ml": true }
+    """
+    data = request.get_json() or {}
+    use_ml = data.get('use_ml', True)
+    
+    if use_ml and ML_MODEL_AVAILABLE:
+        try:
+            predictor = SIM_STATE.get('margin_predictor')
+            if predictor is None:
+                predictor = get_margin_predictor(
+                    os.path.join(BACKEND_DIR, 'ML', 'ccp_policy.pt')
+                )
+                SIM_STATE['margin_predictor'] = predictor
+            
+            SIM_STATE['margin_requirements'] = predictor.generate_margin_requirements(
+                SIM_STATE['bank_attrs']
+            )
+            SIM_STATE['use_ml_margins'] = True
+            method = 'ML model'
+        except Exception as e:
+            SIM_STATE['margin_requirements'] = generate_random_margin_requirements(
+                SIM_STATE['bank_attrs']
+            )
+            SIM_STATE['use_ml_margins'] = False
+            method = f'random (ML failed: {e})'
+    else:
+        SIM_STATE['margin_requirements'] = generate_random_margin_requirements(
+            SIM_STATE['bank_attrs']
+        )
+        SIM_STATE['use_ml_margins'] = False
+        method = 'random'
+    
+    # Update contagion simulator with new margins
+    SIM_STATE['contagion'].margin_requirements = SIM_STATE['margin_requirements'].copy()
+    SIM_STATE['contagion'].initialize_states()
+    
+    return jsonify({
+        'status': 'ok',
+        'method': method,
+        'ml_margins_enabled': SIM_STATE['use_ml_margins'],
+        'total_margin_B': round(sum(SIM_STATE['margin_requirements'].values()), 2),
+        'num_banks': len(SIM_STATE['margin_requirements'])
+    })
+
+
+@app.route('/api/ml/simulate-with-margins', methods=['POST'])
+def simulate_with_custom_margins():
+    """
+    Run simulation with custom margin requirements.
+    Allows testing different margin scenarios.
+    
+    Body: {
+        "margins": {"JPM": 100.0, "BAC": 50.0, ...},  # Optional: custom margins
+        "shock_type": "bank" | "stock",
+        "target": "JPM" | {"AAPL": 30},  # Bank name or stock shocks
+        "shock_pct": 50,  # For bank shocks
+        "failure_threshold": 20
+    }
+    """
+    data = request.get_json()
+    
+    shock_type = data.get('shock_type', 'bank')
+    target = data.get('target')
+    shock_pct = data.get('shock_pct', 50)
+    threshold = data.get('failure_threshold', 20)
+    custom_margins = data.get('margins')
+    
+    if target is None:
+        return jsonify({'error': 'target is required'}), 400
+    
+    # Use custom margins if provided, otherwise use current
+    if custom_margins:
+        margins = custom_margins
+    else:
+        margins = SIM_STATE['margin_requirements']
+    
+    # Create temporary contagion simulator with specified margins
+    temp_contagion = BankingNetworkContagion(
+        SIM_STATE['graph'],
+        SIM_STATE['stock_prices'],
+        SIM_STATE['interbank_matrix'],
+        margins
+    )
+    
+    if shock_type == 'bank':
+        if target not in SIM_STATE['bank_attrs']:
+            return jsonify({'error': f'Bank {target} not found'}), 400
+        result = temp_contagion.propagate_bank_shock(target, shock_pct, failure_threshold=threshold)
+    elif shock_type == 'stock':
+        if not isinstance(target, dict):
+            return jsonify({'error': 'For stock shock, target must be a dict of {ticker: pct}'}), 400
+        result = temp_contagion.propagate_stock_shock(target, failure_threshold=threshold)
+    else:
+        return jsonify({'error': f'Unknown shock_type: {shock_type}'}), 400
+    
+    network = _get_post_sim_network(temp_contagion)
+    result['network'] = network
+    result['margins_used'] = {k: round(v, 3) for k, v in margins.items()}
+    result['total_margin_B'] = round(sum(margins.values()), 2)
+    
+    return jsonify(result)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
