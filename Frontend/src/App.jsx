@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import NetworkGraph from './components/NetworkGraph';
 import ControlPanel from './components/ControlPanel';
 import SimulationResults from './components/SimulationResults';
-import { getBanks, getNetwork, getStocks, simulateBankShock, simulateStockShock, resetSimulation } from './api';
+import { getBanks, getNetwork, getStocks, simulateBankShock, simulateStockShock, resetSimulation, getMlStatus, getMarginRequirements, regenerateMargins } from './api';
 import './styles/theme.css';
 import './App.css';
 
@@ -14,6 +14,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState(null);
+  
+  // ML Model State
+  const [mlStatus, setMlStatus] = useState({ ml_available: false, ml_margins_enabled: false });
+  const [marginInfo, setMarginInfo] = useState({ total_margin_B: 0, margins: [] });
 
   // Load initial data
   useEffect(() => {
@@ -21,14 +25,18 @@ function App() {
       try {
         setInitializing(true);
         setError(null);
-        const [banksData, networkDataRes, stocksData] = await Promise.all([
+        const [banksData, networkDataRes, stocksData, mlStatusData, marginData] = await Promise.all([
           getBanks(),
           getNetwork(),
           getStocks(),
+          getMlStatus().catch(() => ({ ml_available: false, ml_margins_enabled: false })),
+          getMarginRequirements().catch(() => ({ total_margin_B: 0, margins: [] })),
         ]);
         setBanks(banksData);
         setNetworkData(networkDataRes);
         setStocks(stocksData);
+        setMlStatus(mlStatusData);
+        setMarginInfo(marginData);
       } catch (e) {
         setError('Failed to connect to backend. Make sure the Flask server is running on port 5000.');
         console.error(e);
@@ -63,20 +71,45 @@ function App() {
     }
   };
 
-  const handleReset = async () => {
+  const handleReset = async (useMlMargins = true) => {
     try {
       setLoading(true);
       setError(null);
       setSimResult(null);
-      await resetSimulation();
-      const [banksData, networkDataRes, stocksData] = await Promise.all([
+      await resetSimulation(useMlMargins);
+      const [banksData, networkDataRes, stocksData, mlStatusData, marginData] = await Promise.all([
         getBanks(),
         getNetwork(),
         getStocks(),
+        getMlStatus().catch(() => ({ ml_available: false, ml_margins_enabled: false })),
+        getMarginRequirements().catch(() => ({ total_margin_B: 0, margins: [] })),
       ]);
       setBanks(banksData);
       setNetworkData(networkDataRes);
       setStocks(stocksData);
+      setMlStatus(mlStatusData);
+      setMarginInfo(marginData);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleMlMargins = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const newUseMl = !mlStatus.ml_margins_enabled;
+      await regenerateMargins(newUseMl);
+      const [banksData, mlStatusData, marginData] = await Promise.all([
+        getBanks(),
+        getMlStatus().catch(() => ({ ml_available: false, ml_margins_enabled: false })),
+        getMarginRequirements().catch(() => ({ total_margin_B: 0, margins: [] })),
+      ]);
+      setBanks(banksData);
+      setMlStatus(mlStatusData);
+      setMarginInfo(marginData);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -106,7 +139,20 @@ function App() {
           <span className="stat">{banks.length} Banks</span>
           <span className="stat">{stocks.length} Stocks</span>
           <span className="stat">{networkData.links.length} Exposures</span>
-          <button className="reset-btn" onClick={handleReset} disabled={loading}>
+          <span className="stat margin-stat" title={`Total Margin: $${marginInfo.total_margin_B?.toFixed(1) || 0}B`}>
+            ${marginInfo.total_margin_B?.toFixed(0) || 0}B Margin
+          </span>
+          {mlStatus.ml_available && (
+            <button 
+              className={`ml-toggle-btn ${mlStatus.ml_margins_enabled ? 'ml-active' : ''}`}
+              onClick={handleToggleMlMargins}
+              disabled={loading}
+              title={mlStatus.ml_margins_enabled ? 'Using ML-based margins' : 'Using random margins'}
+            >
+              {mlStatus.ml_margins_enabled ? '🤖 ML' : '🎲 Random'}
+            </button>
+          )}
+          <button className="reset-btn" onClick={() => handleReset(mlStatus.ml_margins_enabled)} disabled={loading}>
             Reset
           </button>
         </div>

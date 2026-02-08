@@ -1,1 +1,0 @@
-Make sure to change the path files in all the tests to "filename.py" to "../filename.py"

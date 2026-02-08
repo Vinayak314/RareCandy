@@ -42,6 +42,41 @@ export function simulateStockShock(shocks, failureThreshold = 20) {
   });
 }
 
-export function resetSimulation() {
-  return fetchJSON('/simulate/reset', { method: 'POST' });
+export function resetSimulation(useMlMargins = true) {
+  return fetchJSON('/simulate/reset', { 
+    method: 'POST',
+    body: JSON.stringify({ use_ml_margins: useMlMargins }),
+  });
+}
+
+export function getGreeting() {
+  return fetchJSON('/greeting');
+}
+
+// ─── ML Model API Functions ─────────────────────────────────────────────────
+
+export function getMlStatus() {
+  return fetchJSON('/ml/status');
+}
+
+export function getMarginRequirements() {
+  return fetchJSON('/ml/margins');
+}
+
+export function getBankMarginDetails(bankName) {
+  return fetchJSON(`/ml/margins/${bankName}`);
+}
+
+export function regenerateMargins(useMl = true) {
+  return fetchJSON('/ml/regenerate-margins', {
+    method: 'POST',
+    body: JSON.stringify({ use_ml: useMl }),
+  });
+}
+
+export function simulateWithCustomMargins(config) {
+  return fetchJSON('/ml/simulate-with-margins', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
 }
