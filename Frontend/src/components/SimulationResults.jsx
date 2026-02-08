@@ -6,8 +6,9 @@ export default function SimulationResults({ result }) {
   const {
     num_failed, total_banks, collapse_ratio, total_asset_loss,
     avg_survivor_health, rounds, system_collapsed, failed_banks,
-    contagion_history, banks
+    contagion_history, banks, ccp_payoff_B, payoff_breakdown
   } = result;
+
 
   // Sort banks by asset loss descending
   const sortedBanks = [...(banks || [])].sort((a, b) => b.asset_loss - a.asset_loss);
@@ -35,6 +36,12 @@ export default function SimulationResults({ result }) {
           <div className="card-value">{rounds}</div>
           <div className="card-label">Rounds to Stability</div>
         </div>
+        {ccp_payoff_B !== undefined && (
+          <div className={`card ccp-card ${ccp_payoff_B > 0 ? 'warning' : 'safe'}`}>
+            <div className="card-value">${ccp_payoff_B.toFixed(1)}B</div>
+            <div className="card-label">💰 CCP Payoff</div>
+          </div>
+        )}
       </div>
 
       {system_collapsed && (

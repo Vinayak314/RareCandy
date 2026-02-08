@@ -249,6 +249,8 @@
 .card.danger { background: #fee; border: 1px solid #D91A25; }
 .card.warning { background: #fff8e1; border: 1px solid #FF9800; }
 .card.safe { background: #e8f5e9; border: 1px solid #4CAF50; }
+.card.ccp-card { border-width: 2px; }
+.card.ccp-card.warning { background: linear-gradient(135deg, #fff8e1 0%, #ffe082 100%); }
 .card-value { font-size: 1.2rem; font-weight: 800; color: #1a1a1a; }
 .card-label { font-size: 0.65rem; color: #666; font-weight: 600; text-transform: uppercase; }
 
