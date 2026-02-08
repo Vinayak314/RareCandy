@@ -7,14 +7,31 @@ import React, { useState } from 'react';
 export default function ForecastResults({ result }) {
     const [selectedPeriod, setSelectedPeriod] = useState('1_month');
 
+    // Define preferred order
+    const ORDERED_PERIODS = ['1_month', '3_months', '6_months', '1_year'];
+
     if (!result || !result.forecasts) {
         return null;
     }
 
     const forecasts = result.forecasts;
-    const periods = Object.keys(forecasts);
+    // Sort periods based on predefined order
+    const periods = Object.keys(forecasts).sort((a, b) => {
+        return ORDERED_PERIODS.indexOf(a) - ORDERED_PERIODS.indexOf(b);
+    });
+
     const currentForecast = forecasts[selectedPeriod];
     const isBankShock = result.shock_type === 'BANK_SHOCK_FORECAST';
+
+    // Helper to downsample timeline data for visualization
+    const downsampleTimeline = (timeline, maxPoints = 60) => {
+        if (!timeline || timeline.length <= maxPoints) return timeline;
+
+        const step = Math.ceil(timeline.length / maxPoints);
+        return timeline.filter((_, index) => index % step === 0);
+    };
+
+    const displayTimeline = currentForecast ? downsampleTimeline(currentForecast.health_timeline) : [];
 
     // Calculate trend indicators
     const getTrendClass = (value, baseline = 50) => {
@@ -146,15 +163,19 @@ export default function ForecastResults({ result }) {
                     {currentForecast.health_timeline && currentForecast.health_timeline.length > 0 && (
                         <div className="timeline-summary">
                             <h4>Health Evolution</h4>
-                            <div className="mini-chart">
-                                {currentForecast.health_timeline.map((point, idx) => (
+                            <div
+                                className="mini-chart"
+                                style={{ gap: displayTimeline.length > 30 ? '1px' : '2px' }}
+                            >
+                                {displayTimeline.map((point, idx) => (
                                     <div
                                         key={idx}
                                         className="chart-bar"
                                         style={{
                                             height: `${point.avg_system_health}%`,
                                             backgroundColor: point.avg_system_health < 40 ? '#D91A25' :
-                                                point.avg_system_health < 60 ? '#FF9800' : '#4CAF50'
+                                                point.avg_system_health < 60 ? '#FF9800' : '#4CAF50',
+                                            minWidth: displayTimeline.length > 30 ? '2px' : '4px'
                                         }}
                                         title={`Day ${point.day}: ${point.avg_system_health.toFixed(1)}%`}
                                     />
