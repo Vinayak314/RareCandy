@@ -20,6 +20,14 @@ const NetworkGraph = ({ data, onNodeClick }) => {
     return () => window.removeEventListener('resize', update);
   }, []);
 
+  useEffect(() => {
+    if (fgRef.current) {
+      // Configure forces once the graph is mounted
+      fgRef.current.d3Force('charge').strength(-400); // Stronger repulsion
+      fgRef.current.d3Force('link').distance(100);    // Longer links
+    }
+  }, []);
+
   const nodeColor = useCallback((node) => {
     if (node.failed) return '#D91A25';
     if (node.health === undefined) return '#2C2C2C';
@@ -87,6 +95,11 @@ const NetworkGraph = ({ data, onNodeClick }) => {
         cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
+        onEngineStop={() => {
+          if (fgRef.current) {
+            fgRef.current.zoomToFit(400, 50);
+          }
+        }}
       />
     </div>
   );
