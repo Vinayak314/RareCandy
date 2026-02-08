@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getGreeting } from '../api';
 
 export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate, loading }) {
@@ -10,9 +10,38 @@ export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate
   const [threshold, setThreshold] = useState(20);
   const [greeting, setGreeting] = useState('');
 
+  // Stock search state
+  const [stockSearch, setStockSearch] = useState('');
+  const [showStockDropdown, setShowStockDropdown] = useState(false);
+  const dropdownRef = useRef(null);
+
+  // Load greeting
   useEffect(() => {
     getGreeting().then(data => setGreeting(data.greeting)).catch(() => { });
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowStockDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter allStocks based on search
+  const filteredStocks = useMemo(() => {
+    if (!stockSearch.trim()) return allStocks.slice(0, 50); // Show first 50 by default
+    const search = stockSearch.toUpperCase();
+    return allStocks.filter(s =>
+      s.ticker.toUpperCase().includes(search)
+    ).slice(0, 50); // Limit to 50 results
+  }, [allStocks, stockSearch]);
+
+  // Get selected stocks for display
+  const selectedStockTickers = Object.keys(stockShocks).filter(t => stockShocks[t] > 0);
 
   const handleStockShockChange = (ticker, value) => {
     setStockShocks(prev => {
@@ -87,6 +116,30 @@ export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate
           </button>
         </div>
 
+        {/* Simulation Type Toggle */}
+        <div className="simulation-type-toggle">
+          <label>Simulation Type</label>
+          <div className="sim-type-buttons">
+            <button
+              className={simulationType === 'instant' ? 'active' : ''}
+              onClick={() => setSimulationType('instant')}
+            >
+              ⚡ Instant
+            </button>
+            <button
+              className={simulationType === 'forecast' ? 'active' : ''}
+              onClick={() => setSimulationType('forecast')}
+            >
+              📈 Forecast
+            </button>
+          </div>
+          <div className="sim-type-description">
+            {simulationType === 'instant'
+              ? 'Immediate shock impact simulation'
+              : 'Projects impact over 1mo, 3mo, 6mo, 1yr'}
+          </div>
+        </div>
+
         {/* Bank Shock Mode */}
         {mode === 'bank' && (
           <div className="shock-config">
@@ -115,22 +168,77 @@ export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate
         {/* Stock Shock Mode */}
         {mode === 'stock' && (
           <div className="shock-config">
-            <label>Devalue Stocks (set % drop)</label>
-            <div className="stock-shock-list">
-              {stocks.map(s => (
-                <div key={s.ticker} className="stock-shock-row">
-                  <span className="ticker">{s.ticker}</span>
-                  <span className="price">${s.price.toFixed(2)}</span>
-                  <input
-                    type="number" min={0} max={95} step={5}
-                    placeholder="0"
-                    value={stockShocks[s.ticker] || ''}
-                    onChange={e => handleStockShockChange(s.ticker, e.target.value)}
-                  />
-                  <span className="pct">%</span>
+            <label>Search & Add Stocks ({allStocks.length} available)</label>
+            <div className="stock-search-container" ref={dropdownRef}>
+              <input
+                type="text"
+                placeholder="Search by ticker (e.g., AAPL, MSFT)..."
+                value={stockSearch}
+                onChange={e => {
+                  setStockSearch(e.target.value);
+                  setShowStockDropdown(true);
+                }}
+                onFocus={() => setShowStockDropdown(true)}
+                className="stock-search-input"
+              />
+              {showStockDropdown && filteredStocks.length > 0 && (
+                <div className="stock-dropdown">
+                  {filteredStocks.map(s => (
+                    <div
+                      key={s.ticker}
+                      className={`stock-dropdown-item ${stockShocks[s.ticker] ? 'selected' : ''}`}
+                      onClick={() => addStockToShock(s.ticker)}
+                    >
+                      <span className="ticker">{s.ticker}</span>
+                      <span className="price">${s.price.toFixed(2)}</span>
+                      {stockShocks[s.ticker] && <span className="check">✓</span>}
+                    </div>
+                  ))}
+                  {filteredStocks.length === 50 && (
+                    <div className="stock-dropdown-hint">
+                      Type to narrow results (showing first 50)
+                    </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
+
+            {/* Selected Stocks with shock values */}
+            {selectedStockTickers.length > 0 && (
+              <div className="selected-stocks">
+                <label>Selected Stocks ({selectedStockTickers.length})</label>
+                <div className="stock-shock-list">
+                  {selectedStockTickers.map(ticker => {
+                    const stock = allStocks.find(s => s.ticker === ticker);
+                    return (
+                      <div key={ticker} className="stock-shock-row">
+                        <span className="ticker">{ticker}</span>
+                        <span className="price">${stock?.price.toFixed(2) || '?'}</span>
+                        <input
+                          type="number" min={1} max={95} step={5}
+                          value={stockShocks[ticker] || ''}
+                          onChange={e => handleStockShockChange(ticker, e.target.value)}
+                        />
+                        <span className="pct">%</span>
+                        <button
+                          className="remove-btn"
+                          onClick={() => removeStockFromShock(ticker)}
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {selectedStockTickers.length === 0 && (
+              <div className="stock-hint">
+                Search and add stocks above to apply shocks
+              </div>
+            )}
           </div>
         )}
 
@@ -146,7 +254,7 @@ export default function ControlPanel({ banks, stocks, allStocks = [], onSimulate
 
         {/* Run Button */}
         <button className="run-btn" onClick={handleRun} disabled={loading}>
-          {loading ? 'Simulating...' : 'Run Simulation'}
+          {loading ? 'Simulating...' : (simulationType === 'forecast' ? '📈 Run Forecast' : '⚡ Run Simulation')}
         </button>
       </div>
 
