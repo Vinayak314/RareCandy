@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import NetworkGraph from './components/NetworkGraph';
 import ControlPanel from './components/ControlPanel';
 import SimulationResults from './components/SimulationResults';
-import { getBanks, getNetwork, getStocks, simulateBankShock, simulateStockShock, resetSimulation } from './api';
+import ForecastResults from './components/ForecastResults';
+import { getBanks, getNetwork, getStocks, getAllStocks, simulateBankShock, simulateStockShock, resetSimulation } from './api';
 import './styles/theme.css';
 import './App.css';
 
 function App() {
   const [banks, setBanks] = useState([]);
   const [stocks, setStocks] = useState([]);
+  const [allStocks, setAllStocks] = useState([]);  // All 965 stocks for shock selection
   const [networkData, setNetworkData] = useState({ nodes: [], links: [] });
   const [simResult, setSimResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -21,14 +23,16 @@ function App() {
       try {
         setInitializing(true);
         setError(null);
-        const [banksData, networkDataRes, stocksData] = await Promise.all([
+        const [banksData, networkDataRes, stocksData, allStocksData] = await Promise.all([
           getBanks(),
           getNetwork(),
           getStocks(),
+          getAllStocks(),
         ]);
         setBanks(banksData);
         setNetworkData(networkDataRes);
         setStocks(stocksData);
+        setAllStocks(allStocksData);
       } catch (e) {
         setError('Failed to connect to backend. Make sure the Flask server is running on port 5000.');
         console.error(e);
@@ -44,15 +48,29 @@ function App() {
       setLoading(true);
       setError(null);
       let result;
+
+      const isForecast = config.simulationType === 'forecast';
+
       if (config.type === 'bank') {
-        result = await simulateBankShock(config.bank, config.shock_pct, config.failure_threshold);
+        if (isForecast) {
+          // Import dynamically to avoid issues
+          const { forecastBankShock } = await import('./api');
+          result = await forecastBankShock(config.bank, config.shock_pct, config.failure_threshold);
+        } else {
+          result = await simulateBankShock(config.bank, config.shock_pct, config.failure_threshold);
+        }
       } else {
-        result = await simulateStockShock(config.shocks, config.failure_threshold);
+        if (isForecast) {
+          const { forecastStockShock } = await import('./api');
+          result = await forecastStockShock(config.shocks, config.failure_threshold);
+        } else {
+          result = await simulateStockShock(config.shocks, config.failure_threshold);
+        }
       }
 
       setSimResult(result);
 
-      // Update network graph with post-simulation state
+      // Update network graph with post-simulation state (only for instant simulations)
       if (result.network) {
         setNetworkData(result.network);
       }
@@ -69,14 +87,16 @@ function App() {
       setError(null);
       setSimResult(null);
       await resetSimulation();
-      const [banksData, networkDataRes, stocksData] = await Promise.all([
+      const [banksData, networkDataRes, stocksData, allStocksData] = await Promise.all([
         getBanks(),
         getNetwork(),
         getStocks(),
+        getAllStocks(),
       ]);
       setBanks(banksData);
       setNetworkData(networkDataRes);
       setStocks(stocksData);
+      setAllStocks(allStocksData);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -104,7 +124,7 @@ function App() {
         </div>
         <div className="header-right">
           <span className="stat">{banks.length} Banks</span>
-          <span className="stat">{stocks.length} Stocks</span>
+          <span className="stat">{allStocks.length} Stocks Available</span>
           <span className="stat">{networkData.links.length} Exposures</span>
           <button className="reset-btn" onClick={handleReset} disabled={loading}>
             Reset
@@ -123,6 +143,7 @@ function App() {
           <ControlPanel
             banks={banks}
             stocks={stocks}
+            allStocks={allStocks}
             onSimulate={handleSimulate}
             loading={loading}
           />
@@ -141,11 +162,20 @@ function App() {
         {/* Right: Results */}
         <aside className="sidebar-right">
           {simResult ? (
-            <SimulationResults result={simResult} />
+            // Check if it's a forecast result (has forecasts property)
+            simResult.forecasts ? (
+              <ForecastResults result={simResult} />
+            ) : (
+              <SimulationResults result={simResult} />
+            )
           ) : (
             <div className="placeholder-panel">
               <h2>Results</h2>
               <p>Configure a shock and run the simulation to see contagion effects.</p>
+              <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>
+                <strong>Instant:</strong> Immediate shock impact<br />
+                <strong>Forecast:</strong> Projects impact over 1mo, 3mo, 6mo, 1yr
+              </p>
             </div>
           )}
         </aside>

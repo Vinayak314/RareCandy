@@ -69,10 +69,13 @@ SIM_STATE = {
     'graph': None,
     'stock_prices': None,
     'stock_timeseries': None,
+    'all_stock_prices': None,      # All 965 stocks with latest prices
+    'all_stock_timeseries': None,  # All 965 stocks time series
     'holdings': None,
     'contagion': None,
     'interbank_matrix': None,
     'network_simulator': None,
+    'forecast_simulator': None,    # Forecast simulator for time-based projections
 }
 
 
@@ -356,6 +359,339 @@ class BankShockSimulator:
         }
 
 
+# ============================================================================
+# FORECAST SIMULATOR
+# ============================================================================
+class ForecastSimulator:
+    """
+    Simulates shock impacts over time using historical stock data.
+    Forecasts bank health for 1 month, 3 months, 6 months, and 1 year.
+    """
+    
+    # Trading days approximation
+    FORECAST_PERIODS = {
+        '1_month': 21,      # ~21 trading days
+        '3_months': 63,     # ~63 trading days  
+        '6_months': 126,    # ~126 trading days
+        '1_year': 252       # ~252 trading days
+    }
+    
+    def __init__(self, network: NetworkSimulator, all_stock_timeseries: dict,
+                 payoff_calculator: CCPPayoffCalculator = None):
+        self.network = network
+        self.all_stock_timeseries = all_stock_timeseries
+        self.payoff_calculator = payoff_calculator or CCPPayoffCalculator()
+        
+        # Pre-compute stock statistics for forecasting
+        self._compute_stock_statistics()
+    
+    def _compute_stock_statistics(self):
+        """Compute historical volatility and trend for each stock."""
+        self.stock_stats = {}
+        
+        for ticker, ts in self.all_stock_timeseries.items():
+            if len(ts) < 10:
+                continue
+            
+            # Sort by date
+            sorted_ts = sorted(ts, key=lambda x: x['Date'])
+            closes = [d['Close'] for d in sorted_ts]
+            
+            # Calculate daily returns
+            returns = []
+            for i in range(1, len(closes)):
+                if closes[i-1] > 0:
+                    returns.append((closes[i] - closes[i-1]) / closes[i-1])
+            
+            if len(returns) < 5:
+                continue
+            
+            # Calculate statistics
+            mean_return = np.mean(returns)
+            volatility = np.std(returns)
+            
+            # Calculate trend (linear regression slope)
+            x = np.arange(len(closes))
+            coeffs = np.polyfit(x, closes, 1)
+            trend_slope = coeffs[0] / closes[0]  # Normalize by initial price
+            
+            self.stock_stats[ticker] = {
+                'mean_return': mean_return,
+                'volatility': volatility,
+                'trend_slope': trend_slope,
+                'last_price': closes[-1],
+                'first_price': closes[0],
+                'total_return': (closes[-1] - closes[0]) / closes[0] if closes[0] > 0 else 0
+            }
+    
+    def _project_stock_prices(self, shock_tickers: dict, days_ahead: int, 
+                              num_simulations: int = 100) -> dict:
+        """
+        Monte Carlo simulation to project stock prices forward.
+        Returns distribution of prices for each stock.
+        """
+        projections = {}
+        
+        for ticker, shock_pct in shock_tickers.items():
+            if ticker not in self.stock_stats:
+                continue
+            
+            stats = self.stock_stats[ticker]
+            initial_price = stats['last_price'] * (1 - shock_pct / 100.0)  # Apply shock
+            
+            # Run Monte Carlo simulations
+            final_prices = []
+            for _ in range(num_simulations):
+                price = initial_price
+                for _ in range(days_ahead):
+                    # Geometric Brownian Motion with trend
+                    daily_return = np.random.normal(stats['mean_return'], stats['volatility'])
+                    price *= (1 + daily_return)
+                    price = max(price, 0.01)  # Floor at $0.01
+                final_prices.append(price)
+            
+            projections[ticker] = {
+                'initial_price': stats['last_price'],
+                'shocked_price': initial_price,
+                'projected_mean': np.mean(final_prices),
+                'projected_median': np.median(final_prices),
+                'projected_p10': np.percentile(final_prices, 10),
+                'projected_p90': np.percentile(final_prices, 90),
+                'recovery_pct': (np.mean(final_prices) - initial_price) / initial_price * 100 if initial_price > 0 else 0
+            }
+        
+        return projections
+    
+    def _simulate_bank_evolution(self, bank_name: str, shock_pct: float, 
+                                 days_ahead: int, failure_threshold: float = 20.0) -> dict:
+        """
+        Simulate bank health evolution over time after a shock.
+        Models gradual contagion and recovery dynamics.
+        """
+        # Reset network
+        self.network.reset()
+        state = self.network.get_state()
+        
+        if bank_name not in self.network.bank_list:
+            return None
+        
+        # Apply initial shock
+        initial_equity = state.equity.get(bank_name, 0)
+        initial_assets = state.assets.get(bank_name, 0)
+        
+        shock_fraction = shock_pct / 100.0
+        shock_amount = initial_assets * shock_fraction
+        state.equity[bank_name] -= shock_amount
+        state.assets[bank_name] -= shock_amount
+        
+        # Track health over time
+        health_timeline = []
+        failed_banks_timeline = []
+        systemic_loss_timeline = []
+        
+        # Simulate day by day (with acceleration)
+        step_size = max(1, days_ahead // 50)  # Max 50 steps
+        current_day = 0
+        
+        while current_day <= days_ahead:
+            # Calculate current state
+            all_health = {}
+            for bank in self.network.bank_list:
+                all_health[bank] = self.network.get_bank_health(bank)
+            
+            # Check for failures
+            for bank in self.network.bank_list:
+                if bank not in state.failed_banks and all_health[bank] < failure_threshold:
+                    state.failed_banks.add(bank)
+            
+            # Record state
+            health_timeline.append({
+                'day': current_day,
+                'target_bank_health': all_health.get(bank_name, 0),
+                'avg_system_health': np.mean(list(all_health.values())),
+                'min_health': min(all_health.values()),
+                'num_failed': len(state.failed_banks)
+            })
+            
+            # Gradual contagion effects (small daily propagation)
+            if len(state.failed_banks) > 0 and current_day > 0:
+                # Daily contagion factor (small)
+                daily_contagion = 0.001 * len(state.failed_banks)
+                for bank in self.network.bank_list:
+                    if bank not in state.failed_banks:
+                        # Small daily loss from failed counterparties
+                        counterparty_exposure = sum(
+                            state.exposures.get(bank, {}).get(fb, 0) 
+                            for fb in state.failed_banks
+                        )
+                        if counterparty_exposure > 0:
+                            loss = counterparty_exposure * daily_contagion
+                            loss = min(loss, state.assets[bank] * 0.001)  # Cap at 0.1%
+                            state.assets[bank] -= loss
+                            state.equity[bank] -= loss
+            
+            # Recovery dynamics (healthy banks slowly recover)
+            if current_day > 0:
+                for bank in self.network.bank_list:
+                    if bank not in state.failed_banks:
+                        # Daily recovery (0.01-0.05% based on health)
+                        health = all_health.get(bank, 50)
+                        if health > 40:  # Only healthy banks recover
+                            recovery_rate = 0.0001 * (health / 100.0)
+                            recovery = state.assets[bank] * recovery_rate
+                            state.assets[bank] += recovery
+                            state.equity[bank] += recovery
+            
+            current_day += step_size
+        
+        # Calculate final CCP payoff
+        ccp_payoff = self.payoff_calculator.calculate_payoff(state.failed_banks, state)
+        
+        return {
+            'health_timeline': health_timeline,
+            'final_failed_banks': list(state.failed_banks),
+            'ccp_payoff_B': round(ccp_payoff, 2)
+        }
+    
+    def forecast_bank_shock(self, bank_name: str, shock_pct: float,
+                            failure_threshold: float = 20.0) -> dict:
+        """
+        Forecast the full impact of a bank shock over all time horizons.
+        """
+        results = {
+            'shock_type': 'BANK_SHOCK_FORECAST',
+            'target_bank': bank_name,
+            'shock_percent': shock_pct,
+            'forecasts': {}
+        }
+        
+        for period_name, days in self.FORECAST_PERIODS.items():
+            forecast = self._simulate_bank_evolution(
+                bank_name, shock_pct, days, failure_threshold
+            )
+            if forecast:
+                results['forecasts'][period_name] = {
+                    'days': days,
+                    'period_label': period_name.replace('_', ' ').title(),
+                    'final_target_health': forecast['health_timeline'][-1]['target_bank_health'] if forecast['health_timeline'] else 0,
+                    'final_avg_health': forecast['health_timeline'][-1]['avg_system_health'] if forecast['health_timeline'] else 0,
+                    'total_failures': len(forecast['final_failed_banks']),
+                    'failed_banks': forecast['final_failed_banks'],
+                    'ccp_payoff_B': forecast['ccp_payoff_B'],
+                    'health_timeline': forecast['health_timeline']
+                }
+        
+        return results
+    
+    def forecast_stock_shock(self, stock_shocks: dict, 
+                             failure_threshold: float = 20.0) -> dict:
+        """
+        Forecast the full impact of stock shocks over all time horizons.
+        Uses Monte Carlo to project stock recovery and bank health evolution.
+        """
+        results = {
+            'shock_type': 'STOCK_SHOCK_FORECAST',
+            'shocks': stock_shocks,
+            'num_stocks_shocked': len(stock_shocks),
+            'forecasts': {}
+        }
+        
+        for period_name, days in self.FORECAST_PERIODS.items():
+            # Project stock prices
+            stock_projections = self._project_stock_prices(stock_shocks, days)
+            
+            # For stock shocks, we need to apply the shock and then simulate
+            self.network.reset()
+            state = self.network.get_state()
+            
+            # Apply initial stock shock impact to banks
+            total_bank_losses = {}
+            for ticker, shock_pct in stock_shocks.items():
+                if ticker not in self.stock_stats:
+                    continue
+                
+                stats = self.stock_stats[ticker]
+                old_price = stats['last_price']
+                new_price = old_price * (1 - shock_pct / 100.0)
+                
+                # Impact on all banks (systemic effect)
+                for bank in self.network.bank_list:
+                    if bank not in total_bank_losses:
+                        total_bank_losses[bank] = 0
+                    
+                    # Systemic loss from market shock
+                    market_correlation = 0.1  # 10% correlation to overall market
+                    systemic_loss = state.assets[bank] * (shock_pct / 100.0) * market_correlation * 0.01
+                    total_bank_losses[bank] += systemic_loss
+            
+            # Apply losses
+            for bank, loss in total_bank_losses.items():
+                state.assets[bank] -= loss
+                state.equity[bank] -= loss
+            
+            # Check for immediate failures
+            for bank in self.network.bank_list:
+                if bank not in state.failed_banks:
+                    if self.network.get_bank_health(bank) < failure_threshold:
+                        state.failed_banks.add(bank)
+            
+            # Simulate evolution for this period
+            health_timeline = []
+            step_size = max(1, days // 30)
+            current_day = 0
+            
+            while current_day <= days:
+                all_health = {b: self.network.get_bank_health(b) for b in self.network.bank_list}
+                
+                health_timeline.append({
+                    'day': current_day,
+                    'avg_system_health': np.mean(list(all_health.values())),
+                    'min_health': min(all_health.values()),
+                    'num_failed': len(state.failed_banks)
+                })
+                
+                # Small daily recovery based on projected stock recovery
+                if current_day > 0:
+                    avg_recovery = np.mean([
+                        proj.get('recovery_pct', 0) / days
+                        for proj in stock_projections.values()
+                    ]) if stock_projections else 0
+                    
+                    for bank in self.network.bank_list:
+                        if bank not in state.failed_banks:
+                            health = all_health.get(bank, 50)
+                            if health > 30:
+                                recovery = state.assets[bank] * max(0, avg_recovery / 100) * 0.1
+                                state.assets[bank] += recovery
+                                state.equity[bank] += recovery
+                
+                current_day += step_size
+            
+            # Calculate CCP payoff
+            ccp_payoff = self.payoff_calculator.calculate_payoff(state.failed_banks, state)
+            
+            results['forecasts'][period_name] = {
+                'days': days,
+                'period_label': period_name.replace('_', ' ').title(),
+                'stock_projections': {
+                    ticker: {
+                        'initial': round(proj['initial_price'], 2),
+                        'shocked': round(proj['shocked_price'], 2),
+                        'projected_mean': round(proj['projected_mean'], 2),
+                        'recovery_pct': round(proj['recovery_pct'], 2)
+                    }
+                    for ticker, proj in stock_projections.items()
+                },
+                'final_avg_health': health_timeline[-1]['avg_system_health'] if health_timeline else 0,
+                'total_failures': len(state.failed_banks),
+                'failed_banks': list(state.failed_banks),
+                'ccp_payoff_B': round(ccp_payoff, 2),
+                'health_timeline': health_timeline
+            }
+        
+        return results
+
+
 # ─── Data loading functions ───────────────────────────────────────────────────
 
 def load_bank_attributes(csv_path):
@@ -394,7 +730,8 @@ def load_interbank_matrix(csv_path):
     return matrix
 
 
-def load_stock_prices(csv_path, num_stocks=10):
+def load_all_stock_data(csv_path):
+    """Load ALL stock data from CSV - returns all tickers with their prices and timeseries."""
     all_data = defaultdict(list)
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
@@ -408,18 +745,32 @@ def load_stock_prices(csv_path, num_stocks=10):
                 'Close': float(row['Close']),
                 'Volume': float(row['Volume']),
             })
+    
+    all_prices = {}
+    all_timeseries = {}
+    for ticker, records in all_data.items():
+        ts = sorted(records, key=lambda x: x['Date'])
+        all_prices[ticker] = ts[-1]['Close']
+        all_timeseries[ticker] = ts
+    
+    return all_prices, all_timeseries
 
-    viable_tickers = [
-        t for t in all_data if all_data[t][-1]['Close'] >= 5.0
-    ]
+
+def load_stock_prices(csv_path, num_stocks=10, all_data=None):
+    """Select a subset of stocks for simulation.
+    If all_data is provided, use it instead of re-reading the CSV.
+    """
+    if all_data is None:
+        all_prices, all_timeseries = load_all_stock_data(csv_path)
+    else:
+        all_prices, all_timeseries = all_data
+
+    # Filter viable tickers (price >= 5.0)
+    viable_tickers = [t for t in all_prices if all_prices[t] >= 5.0]
     selected_tickers = random.sample(viable_tickers, min(num_stocks, len(viable_tickers)))
 
-    selected_prices = {}
-    selected_timeseries = {}
-    for ticker in selected_tickers:
-        ts = sorted(all_data[ticker], key=lambda x: x['Date'])
-        selected_prices[ticker] = ts[-1]['Close']
-        selected_timeseries[ticker] = ts
+    selected_prices = {ticker: all_prices[ticker] for ticker in selected_tickers}
+    selected_timeseries = {ticker: all_timeseries[ticker] for ticker in selected_tickers}
 
     return selected_prices, selected_timeseries
 
@@ -484,9 +835,11 @@ def build_graph(bank_attributes, interbank_matrix):
 # ─── Contagion engine ─────────────────────────────────────────────────────────
 
 class BankingNetworkContagion:
-    def __init__(self, graph, stock_prices=None, interbank_matrix=None):
+    def __init__(self, graph, stock_prices=None, interbank_matrix=None, all_stock_prices=None):
         self.graph = graph
         self.stock_prices = stock_prices.copy() if stock_prices else {}
+        # Store all stock prices for shock simulation (can shock any of 965 stocks)
+        self.all_stock_prices = all_stock_prices.copy() if all_stock_prices else self.stock_prices.copy()
         self.current_stock_prices = stock_prices.copy() if stock_prices else {}
         self.interbank_matrix = interbank_matrix or {}
         self.bank_states = {}
@@ -600,22 +953,44 @@ class BankingNetworkContagion:
 
         initial_healths = {b: self.get_bank_health(b) for b in self.graph}
         initial_failures = set()
+        
+        # Track which shocks were applied (for response)
+        applied_shocks = {}
+        skipped_shocks = []
 
         for ticker, pct in stock_devaluations.items():
-            if ticker not in self.stock_prices:
+            # Check against ALL stock prices (not just the 10 selected)
+            if ticker not in self.all_stock_prices:
+                skipped_shocks.append(ticker)
                 continue
-            old_price = self.stock_prices[ticker]
+            
+            applied_shocks[ticker] = pct
+            old_price = self.all_stock_prices[ticker]
             new_price = old_price * (1 - pct / 100.0)
             self.current_stock_prices[ticker] = new_price
 
+            # Check if any banks hold this stock
+            banks_affected = False
             for bank in self.graph:
                 holdings = self.graph[bank].get('holdings', {})
                 if ticker in holdings:
+                    banks_affected = True
                     shares = holdings[ticker]
                     loss_b = shares * (old_price - new_price) / 1e9
                     if loss_b > 0:
                         self.bank_states[bank]['Total_Assets'] -= loss_b
                         self.bank_states[bank]['Equity'] -= loss_b
+            
+            # If no banks hold this stock directly, apply a smaller systemic shock
+            # based on market correlation (stocks not held still affect market sentiment)
+            if not banks_affected:
+                # Systemic correlation factor (market-wide impact)
+                market_impact_factor = (pct / 100.0) * 0.1  # 10% of shock as systemic impact
+                for bank in self.graph:
+                    total_assets = self.bank_states[bank]['Total_Assets']
+                    systemic_loss = total_assets * market_impact_factor * 0.01  # Small % loss
+                    self.bank_states[bank]['Total_Assets'] -= systemic_loss
+                    self.bank_states[bank]['Equity'] -= systemic_loss
 
         for bank in self.graph:
             if self.get_bank_health(bank) < failure_threshold:
@@ -736,9 +1111,18 @@ def init_simulation():
     SIM_STATE['interbank_matrix'] = load_interbank_matrix(
         os.path.join(DATASET_DIR, 'us_banks_interbank_matrix.csv'))
 
-    print("[INIT] Loading stock prices (selecting 10 random)...")
+    print("[INIT] Loading ALL stock data...")
+    all_prices, all_ts = load_all_stock_data(
+        os.path.join(DATASET_DIR, 'stocks_data_long.csv'))
+    SIM_STATE['all_stock_prices'] = all_prices
+    SIM_STATE['all_stock_timeseries'] = all_ts
+    print(f"[INIT] Loaded {len(all_prices)} total stocks from dataset")
+
+    print("[INIT] Selecting 10 random stocks for simulation...")
     prices, ts = load_stock_prices(
-        os.path.join(DATASET_DIR, 'stocks_data_long.csv'), num_stocks=10)
+        os.path.join(DATASET_DIR, 'stocks_data_long.csv'), 
+        num_stocks=10, 
+        all_data=(all_prices, all_ts))
     SIM_STATE['stock_prices'] = prices
     SIM_STATE['stock_timeseries'] = ts
 
@@ -753,7 +1137,7 @@ def init_simulation():
             SIM_STATE['graph'][bank]['holdings'] = SIM_STATE['holdings'][bank]
 
     SIM_STATE['contagion'] = BankingNetworkContagion(
-        SIM_STATE['graph'], prices, SIM_STATE['interbank_matrix'])
+        SIM_STATE['graph'], prices, SIM_STATE['interbank_matrix'], all_prices)
 
     # Also initialize NetworkSimulator for advanced shock simulation
     SIM_STATE['network_simulator'] = NetworkSimulator(
@@ -761,9 +1145,17 @@ def init_simulation():
         os.path.join(DATASET_DIR, 'stocks_data_long.csv'),
         os.path.join(DATASET_DIR, 'us_banks_interbank_matrix.csv')
     )
+    
+    # Initialize ForecastSimulator for time-based projections
+    print("[INIT] Initializing forecast simulator...")
+    SIM_STATE['forecast_simulator'] = ForecastSimulator(
+        SIM_STATE['network_simulator'],
+        all_ts
+    )
+    print(f"[INIT] Forecast simulator ready with {len(SIM_STATE['forecast_simulator'].stock_stats)} stock statistics")
 
     print(f"[INIT] Ready — {len(SIM_STATE['bank_attrs'])} banks, "
-          f"{len(prices)} stocks")
+          f"{len(prices)} selected stocks, {len(all_prices)} total stocks available for shock")
 
 
 # ─── API Routes ───────────────────────────────────────────────────────────────
@@ -844,6 +1236,25 @@ def get_stocks():
             'price': round(price, 2),
             'timeseries': series[-30:] if len(series) > 30 else series,
         })
+    return jsonify(stocks)
+
+
+@app.route('/api/all-stocks', methods=['GET'])
+def get_all_stocks():
+    """Return ALL available stocks (965) for stock shock selection.
+    Only returns ticker and price (no timeseries to keep response small).
+    """
+    all_prices = SIM_STATE['all_stock_prices']
+    
+    stocks = []
+    for ticker, price in all_prices.items():
+        stocks.append({
+            'ticker': ticker,
+            'price': round(price, 2),
+        })
+    
+    # Sort by ticker name for easier searching
+    stocks.sort(key=lambda s: s['ticker'])
     return jsonify(stocks)
 
 
@@ -938,6 +1349,55 @@ def _get_post_sim_network(contagion):
                 })
 
     return {'nodes': nodes, 'links': links}
+
+
+@app.route('/api/simulate/bank-shock-forecast', methods=['POST'])
+def simulate_bank_shock_forecast():
+    """
+    Run a bank-level shock forecast simulation over multiple time horizons.
+    Body: { "bank": "JPM", "shock_pct": 50, "failure_threshold": 20 }
+    Returns forecasts for 1 month, 3 months, 6 months, and 1 year.
+    """
+    data = request.get_json()
+    bank = data.get('bank')
+    shock_pct = data.get('shock_pct', 50)
+    threshold = data.get('failure_threshold', 20)
+
+    if bank not in SIM_STATE['bank_attrs']:
+        return jsonify({'error': f'Bank {bank} not found'}), 400
+    
+    if SIM_STATE['forecast_simulator'] is None:
+        return jsonify({'error': 'Forecast simulator not initialized'}), 500
+
+    result = SIM_STATE['forecast_simulator'].forecast_bank_shock(
+        bank, shock_pct, failure_threshold=threshold
+    )
+
+    return jsonify(result)
+
+
+@app.route('/api/simulate/stock-shock-forecast', methods=['POST'])
+def simulate_stock_shock_forecast():
+    """
+    Run a stock-level shock forecast simulation over multiple time horizons.
+    Body: { "shocks": {"AAPL": 30, "MSFT": 20}, "failure_threshold": 20 }
+    Returns forecasts for 1 month, 3 months, 6 months, and 1 year.
+    """
+    data = request.get_json()
+    shocks = data.get('shocks', {})
+    threshold = data.get('failure_threshold', 20)
+
+    if not shocks:
+        return jsonify({'error': 'No stock shocks provided'}), 400
+    
+    if SIM_STATE['forecast_simulator'] is None:
+        return jsonify({'error': 'Forecast simulator not initialized'}), 500
+
+    result = SIM_STATE['forecast_simulator'].forecast_stock_shock(
+        shocks, failure_threshold=threshold
+    )
+
+    return jsonify(result)
 
 
 @app.route('/api/simulate/reset', methods=['POST'])
