@@ -424,7 +424,6 @@ def generate_random_graph_with_sccs(bank_attributes, num_sccs=5, prob_intra=0.5,
     print(f"  Large->Small: {large_to_small}")
     print(f"  Small->Large: {small_to_large}")
     print(f"  Small->Small: {small_to_small}")
-    prin
     
     return graph
 
@@ -1116,7 +1115,7 @@ if __name__ == '__main__':
         num_stocks = random.randint(1, 3)
         selected_stocks = random.sample(tickers, min(num_stocks, len(tickers)))
         # Random continuous devaluation between 10% and 40%
-        return {stock: round(10 + (40 - 10) * (1 - random.random()**(1/3)), 1) for stock in selected_stocks}
+        return {stock: round(random.uniformrandom(0.1,40), 1) for stock in selected_stocks}
     
     def print_multi_stock_report(result):
         """Print report for multi-stock devaluation scenario."""
