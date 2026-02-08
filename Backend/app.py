@@ -63,6 +63,72 @@ DATASET_DIR = os.path.join(BACKEND_DIR, 'dataset')
 app = Flask(__name__)
 CORS(app)
 
+# Load Featherless API Key
+FLESS_KEY = os.getenv('FLESS')
+if not FLESS_KEY:
+    # Try loading from .env file manually if not in env
+    try:
+        with open(os.path.join(BACKEND_DIR, '.env'), 'r') as f:
+            for line in f:
+                if line.startswith('FLESS='):
+                    FLESS_KEY = line.strip().split('=', 1)[1]
+                    break
+    except Exception:
+        pass
+
+import requests
+import datetime
+
+@app.route('/api/greeting', methods=['GET'])
+def get_greeting():
+    """Get a dynamic greeting from Featherless.ai based on time of day."""
+    current_hour = datetime.datetime.now().hour
+    if 5 <= current_hour < 12:
+        time_of_day = "morning"
+    elif 12 <= current_hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= current_hour < 22:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+
+    if not FLESS_KEY:
+        return jsonify({'greeting': f"Good {time_of_day}!"})
+
+    try:
+        # Using Featherless.ai API (Assuming OpenAI-compatible format as is common)
+        # If specific endpoint differs, this will need adjustment.
+        # Based on standard interference API patterns.
+        response = requests.post(
+            "https://api.featherless.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {FLESS_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-ai/DeepSeek-V3-0324", # Using model from provided docs
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant. Keep it very short."},
+                    {"role": "user", "content": f"Give me a short, professional greeting for a financial simulation dashboard user. It is currently {time_of_day}. Max 10 words."}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 50
+            },
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            greeting = data['choices'][0]['message']['content'].strip().replace('"', '')
+            return jsonify({'greeting': greeting})
+        else:
+            print(f"Featherless API Error: {response.text}")
+            return jsonify({'greeting': f"Good {time_of_day}!"})
+            
+    except Exception as e:
+        print(f"Error fetching greeting: {e}")
+        return jsonify({'greeting': f"Good {time_of_day}!"})
+
 # ─── Global simulation state ─────────────────────────────────────────────────
 SIM_STATE = {
     'bank_attrs': None,
@@ -709,17 +775,17 @@ class BankingNetworkContagion:
             })
 
         return {
-            'num_failed': num_failed,
-            'total_banks': num_total,
-            'collapse_ratio': round(num_failed / num_total, 4),
-            'total_asset_loss': round(self._total_loss(), 2),
-            'avg_survivor_health': round(avg_health, 2),
-            'rounds': len(self.history),
-            'system_collapsed': num_failed / num_total > 0.5,
+            'num_failed': int(num_failed),
+            'total_banks': int(num_total),
+            'collapse_ratio': float(round(num_failed / num_total, 4)),
+            'total_asset_loss': float(round(self._total_loss(), 2)),
+            'avg_survivor_health': float(round(avg_health, 2)),
+            'rounds': int(len(self.history)),
+            'system_collapsed': bool(num_failed / num_total > 0.5),
             'failed_banks': list(self.failed_banks),
             'contagion_history': self.history,
             'banks': banks_detail,
-            'ccp_payoff_B': round(ccp_payoff, 2),
+            'ccp_payoff_B': float(round(ccp_payoff, 2)),
             'payoff_breakdown': payoff_breakdown,
         }
 

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { getGreeting } from '../api';
 
 export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
   const [mode, setMode] = useState('bank'); // 'bank' | 'stock'
@@ -6,6 +7,11 @@ export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
   const [bankShockPct, setBankShockPct] = useState(50);
   const [stockShocks, setStockShocks] = useState({});
   const [threshold, setThreshold] = useState(20);
+  const [greeting, setGreeting] = useState('');
+
+  useEffect(() => {
+    getGreeting().then(data => setGreeting(data.greeting)).catch(() => { });
+  }, []);
 
   const handleStockShockChange = (ticker, value) => {
     setStockShocks(prev => {
@@ -33,86 +39,95 @@ export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
   };
 
   return (
-    <div className="control-panel">
-      <h2>Shock Controls</h2>
+    <>
+      <div className="control-panel">
+        <h2>Shock Controls</h2>
 
-      {/* Mode Toggle */}
-      <div className="mode-toggle">
-        <button
-          className={mode === 'bank' ? 'active' : ''}
-          onClick={() => setMode('bank')}
-        >
-          Bank Shock
-        </button>
-        <button
-          className={mode === 'stock' ? 'active' : ''}
-          onClick={() => setMode('stock')}
-        >
-          Stock Shock
-        </button>
-      </div>
+        {/* Mode Toggle */}
+        <div className="mode-toggle">
+          <button
+            className={mode === 'bank' ? 'active' : ''}
+            onClick={() => setMode('bank')}
+          >
+            Bank Shock
+          </button>
+          <button
+            className={mode === 'stock' ? 'active' : ''}
+            onClick={() => setMode('stock')}
+          >
+            Stock Shock
+          </button>
+        </div>
 
-      {/* Bank Shock Mode */}
-      {mode === 'bank' && (
-        <div className="shock-config">
-          <label>Target Bank</label>
-          <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)}>
-            <option value="">Select bank...</option>
-            {banks.map(b => (
-              <option key={b.id} value={b.id}>
-                {b.id} — ${b.total_assets.toFixed(0)}B
-              </option>
-            ))}
-          </select>
+        {/* Bank Shock Mode */}
+        {mode === 'bank' && (
+          <div className="shock-config">
+            <label>Target Bank</label>
+            <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)}>
+              <option value="">Select bank...</option>
+              {banks.map(b => (
+                <option key={b.id} value={b.id}>
+                  {b.id} — ${b.total_assets.toFixed(0)}B
+                </option>
+              ))}
+            </select>
 
-          <label>Shock Severity: {bankShockPct}%</label>
+            <label>Shock Severity: {bankShockPct}%</label>
+            <input
+              type="range" min={5} max={95} step={5}
+              value={bankShockPct}
+              onChange={e => setBankShockPct(Number(e.target.value))}
+            />
+            <div className="range-labels">
+              <span>5%</span><span>50%</span><span>95%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Stock Shock Mode */}
+        {mode === 'stock' && (
+          <div className="shock-config">
+            <label>Devalue Stocks (set % drop)</label>
+            <div className="stock-shock-list">
+              {stocks.map(s => (
+                <div key={s.ticker} className="stock-shock-row">
+                  <span className="ticker">{s.ticker}</span>
+                  <span className="price">${s.price.toFixed(2)}</span>
+                  <input
+                    type="number" min={0} max={95} step={5}
+                    placeholder="0"
+                    value={stockShocks[s.ticker] || ''}
+                    onChange={e => handleStockShockChange(s.ticker, e.target.value)}
+                  />
+                  <span className="pct">%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Threshold */}
+        <div className="threshold-config">
+          <label>Failure Threshold: {threshold}</label>
           <input
-            type="range" min={5} max={95} step={5}
-            value={bankShockPct}
-            onChange={e => setBankShockPct(Number(e.target.value))}
+            type="range" min={5} max={50} step={5}
+            value={threshold}
+            onChange={e => setThreshold(Number(e.target.value))}
           />
-          <div className="range-labels">
-            <span>5%</span><span>50%</span><span>95%</span>
-          </div>
         </div>
-      )}
 
-      {/* Stock Shock Mode */}
-      {mode === 'stock' && (
-        <div className="shock-config">
-          <label>Devalue Stocks (set % drop)</label>
-          <div className="stock-shock-list">
-            {stocks.map(s => (
-              <div key={s.ticker} className="stock-shock-row">
-                <span className="ticker">{s.ticker}</span>
-                <span className="price">${s.price.toFixed(2)}</span>
-                <input
-                  type="number" min={0} max={95} step={5}
-                  placeholder="0"
-                  value={stockShocks[s.ticker] || ''}
-                  onChange={e => handleStockShockChange(s.ticker, e.target.value)}
-                />
-                <span className="pct">%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Threshold */}
-      <div className="threshold-config">
-        <label>Failure Threshold: {threshold}</label>
-        <input
-          type="range" min={5} max={50} step={5}
-          value={threshold}
-          onChange={e => setThreshold(Number(e.target.value))}
-        />
+        {/* Run Button */}
+        <button className="run-btn" onClick={handleRun} disabled={loading}>
+          {loading ? 'Simulating...' : 'Run Simulation'}
+        </button>
       </div>
 
-      {/* Run Button */}
-      <button className="run-btn" onClick={handleRun} disabled={loading}>
-        {loading ? 'Simulating...' : 'Run Simulation'}
-      </button>
-    </div>
+      {/* Greeting */}
+      {greeting && (
+        <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: '#444', fontStyle: 'italic', fontWeight: 'bold' }}>
+          {greeting}
+        </div>
+      )}
+    </>
   );
 }
