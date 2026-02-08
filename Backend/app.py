@@ -1,21 +1,64 @@
 """
 Flask backend for the Banking Network Contagion Simulation.
 Exposes REST API endpoints for the React frontend.
+Adapted from SpankBank simulation - includes shock simulation and CCP payoff calculation.
 """
 
 import os
-import sys
 import csv
 import random
 import pickle
-from collections import defaultdict
+import numpy as np
+import pandas as pd
+import networkx as nx
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Optional, Set
+from enum import Enum
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
 
-# Add ML directory to path so we can reuse data loading utilities
-ML_DIR = os.path.join(os.path.dirname(__file__), '..', 'ML')
-DATASET_DIR = os.path.join(ML_DIR, 'dataset')
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+CONFIG = {
+    # Time horizon
+    'T': 100,
+    'NUM_EPISODES': 1000,
+
+    # RL parameters
+    'GAMMA': 0.99,
+    'EPSILON_START': 1.0,
+    'EPSILON_MIN': 0.05,
+    'EPSILON_DECAY': 0.995,
+    'MEMORY_SIZE': 5000,
+    'BATCH_SIZE': 64,
+
+    # Bank payoff weights
+    'LAMBDA_RISK': 0.3,
+    'MU_MARGIN': 0.1,
+    'PHI_DEFAULT': 100.0,
+
+    # CCP payoff weights
+    'ALPHA_SYSTEMIC': 1.0,
+    'BETA_DF_LOSS': 0.5,
+    'GAMMA_VOLUME': 0.01,
+
+    # Market parameters
+    'FUNDING_RATE': 0.05,
+    'CRASH_SEVERITY': 1.5,
+    'SHOCK_RANGE': (0.01, 0.10),
+
+    # Model paths
+    'BANK_MODEL_PATH': 'bank_policies.pkl',
+    'CCP_MODEL_PATH': 'ccp_policy.pkl',
+}
+
+# Paths
 BACKEND_DIR = os.path.dirname(__file__)
+DATASET_DIR = os.path.join(BACKEND_DIR, 'dataset')
 
 app = Flask(__name__)
 CORS(app)
@@ -29,10 +72,291 @@ SIM_STATE = {
     'holdings': None,
     'contagion': None,
     'interbank_matrix': None,
+    'network_simulator': None,
 }
 
 
-# ─── Data loading functions (adapted from train2.py) ─────────────────────────
+# ============================================================================
+# ENUMS AND DATA CLASSES
+# ============================================================================
+class TradeDecision(Enum):
+    APPROVED = "APPROVED"
+    REQUIRE_MARGIN = "REQUIRE_MARGIN"
+    REJECTED = "REJECTED"
+
+
+@dataclass
+class SystemState:
+    """Global system state S_t = (E, L, A, X, G)"""
+    equity: Dict[str, float]
+    liquidity: Dict[str, float]
+    assets: Dict[str, float]
+    exposures: Dict[str, Dict[str, float]]
+    liabilities: Dict[str, float]
+    stock_volatility: Dict[str, float]
+    failed_banks: Set[str] = field(default_factory=set)
+
+
+# ============================================================================
+# NETWORK SIMULATOR
+# ============================================================================
+class NetworkSimulator:
+    """Simulates the banking network state evolution."""
+
+    def __init__(self, banks_file: str, stocks_file: str, matrix_file: str):
+        self.banks_df = pd.read_csv(banks_file)
+        self.interbank_matrix = pd.read_csv(matrix_file, index_col=0)
+
+        # Calculate stock volatility
+        stocks_df = pd.read_csv(stocks_file)
+        stocks_df['Return'] = stocks_df.groupby('Ticker')['Close'].pct_change()
+        vol_df = stocks_df.groupby('Ticker')['Return'].std().reset_index()
+        vol_df.columns = ['Ticker', 'Volatility']
+        self.stock_volatility = vol_df.set_index('Ticker')['Volatility'].to_dict()
+
+        self.bank_list = self.banks_df['Bank'].tolist()
+        self.initial_state = self._create_initial_state()
+        self.current_state = None
+        self.reset()
+
+        self.scaler = StandardScaler()
+        features = ['Total_Assets', 'Equity', 'HQLA', 'Net_Outflows_30d', 'Interbank_Liabilities']
+        self.scaler.fit(self.banks_df[features].fillna(0))
+
+        print(f"✅ NetworkSimulator loaded: {len(self.bank_list)} banks, "
+              f"{len(self.stock_volatility)} stocks")
+
+    def _create_initial_state(self) -> SystemState:
+        equity = {}
+        liquidity = {}
+        assets = {}
+        liabilities = {}
+        exposures = {}
+
+        for _, row in self.banks_df.iterrows():
+            bank = row['Bank']
+            equity[bank] = row['Equity']
+            liquidity[bank] = row['HQLA']
+            assets[bank] = row['Total_Assets']
+            liabilities[bank] = row['Total_Liabilities']
+
+            exposures[bank] = {}
+            for other in self.bank_list:
+                if bank != other:
+                    exp = self.interbank_matrix.loc[bank, other] if bank in self.interbank_matrix.index else 0
+                    exposures[bank][other] = exp
+
+        return SystemState(
+            equity=equity,
+            liquidity=liquidity,
+            assets=assets,
+            exposures=exposures,
+            liabilities=liabilities,
+            stock_volatility=self.stock_volatility
+        )
+
+    def reset(self) -> SystemState:
+        self.current_state = SystemState(
+            equity=self.initial_state.equity.copy(),
+            liquidity=self.initial_state.liquidity.copy(),
+            assets=self.initial_state.assets.copy(),
+            exposures={b: e.copy() for b, e in self.initial_state.exposures.items()},
+            liabilities=self.initial_state.liabilities.copy(),
+            stock_volatility=self.initial_state.stock_volatility.copy(),
+            failed_banks=set()
+        )
+        return self.current_state
+
+    def get_state(self) -> SystemState:
+        return self.current_state
+
+    def get_bank_health(self, bank: str) -> float:
+        state = self.current_state
+        if bank in state.failed_banks:
+            return 0.0
+
+        assets = state.assets.get(bank, 0)
+        equity = state.equity.get(bank, 0)
+
+        if assets <= 0:
+            return 0.0
+
+        equity_ratio = equity / assets
+        capital_score = min(40.0, (equity_ratio / 0.15) * 40.0)
+
+        lcr = state.liquidity.get(bank, 0) / max(1, state.liabilities.get(bank, 1) * 0.1)
+        liquidity_score = min(30.0, (lcr / 1.5) * 30.0)
+
+        bank_row = self.banks_df[self.banks_df['Bank'] == bank]
+        if not bank_row.empty:
+            cds = bank_row['Est_CDS_Spread'].values[0]
+            vol = bank_row['Stock_Volatility'].values[0]
+            risk_penalty = min(15.0, cds / 400.0 * 15.0) + min(10.0, vol / 0.5 * 10.0)
+        else:
+            risk_penalty = 10.0
+
+        health = capital_score + liquidity_score - risk_penalty
+        return max(0.0, min(100.0, health))
+
+    def run_contagion(self, failure_threshold: float = 20.0) -> Dict:
+        state = self.current_state
+        initial_failed = state.failed_banks.copy()
+
+        newly_failed = set()
+        for bank in self.bank_list:
+            if bank not in state.failed_banks:
+                if self.get_bank_health(bank) < failure_threshold:
+                    state.failed_banks.add(bank)
+                    newly_failed.add(bank)
+
+        rounds = 0
+        max_rounds = 50
+
+        while newly_failed and rounds < max_rounds:
+            rounds += 1
+            previous_failed = newly_failed.copy()
+            newly_failed = set()
+
+            dampening = 0.7 ** rounds
+
+            for failed_bank in previous_failed:
+                exposures = state.exposures.get(failed_bank, {})
+
+                for creditor, exposure in exposures.items():
+                    if creditor not in state.failed_banks and exposure > 0:
+                        loss = exposure * dampening * 0.5
+                        loss = min(loss, state.assets[creditor] * 0.15)
+
+                        state.assets[creditor] -= loss
+                        state.equity[creditor] -= loss
+
+                        if self.get_bank_health(creditor) < failure_threshold:
+                            state.failed_banks.add(creditor)
+                            newly_failed.add(creditor)
+
+        systemic_loss = sum(
+            max(0, state.liabilities[b] - state.assets[b])
+            for b in state.failed_banks
+        )
+
+        return {
+            'new_failures': len(state.failed_banks) - len(initial_failed),
+            'total_failures': len(state.failed_banks),
+            'systemic_loss': systemic_loss,
+            'rounds': rounds
+        }
+
+
+# ============================================================================
+# CCP PAYOFF CALCULATOR
+# ============================================================================
+class CCPPayoffCalculator:
+    """Calculates the CCP's payoff (loss absorption) when banks fail."""
+    
+    def __init__(self, recovery_rate: float = 0.40):
+        self.recovery_rate = recovery_rate
+    
+    def calculate_payoff(self, failed_banks: Set[str], state: SystemState) -> float:
+        total_payoff = 0.0
+        
+        for bank in failed_banks:
+            liabilities = state.liabilities.get(bank, 0)
+            assets = state.assets.get(bank, 0)
+            shortfall = max(0, liabilities - assets * self.recovery_rate)
+            total_payoff += shortfall
+        
+        return total_payoff
+    
+    def get_detailed_breakdown(self, failed_banks: Set[str], state: SystemState) -> List[Dict]:
+        breakdown = []
+        
+        for bank in failed_banks:
+            liabilities = state.liabilities.get(bank, 0)
+            assets = state.assets.get(bank, 0)
+            equity = state.equity.get(bank, 0)
+            recoverable = assets * self.recovery_rate
+            shortfall = max(0, liabilities - recoverable)
+            
+            breakdown.append({
+                'bank': bank,
+                'total_liabilities_B': round(liabilities, 2),
+                'total_assets_B': round(assets, 2),
+                'final_equity_B': round(equity, 2),
+                'recoverable_assets_B': round(recoverable, 2),
+                'ccp_payoff_B': round(shortfall, 2)
+            })
+        
+        return breakdown
+
+
+# ============================================================================
+# BANK SHOCK SIMULATOR
+# ============================================================================
+class BankShockSimulator:
+    """Simulates direct shocks to specific banks."""
+    
+    def __init__(self, network: NetworkSimulator, payoff_calculator: CCPPayoffCalculator = None):
+        self.network = network
+        self.payoff_calculator = payoff_calculator or CCPPayoffCalculator()
+    
+    def simulate_bank_shock(self, bank_name: str, shock_percent: float, 
+                            reset_first: bool = True, failure_threshold: float = 20.0) -> Dict:
+        if reset_first:
+            self.network.reset()
+        
+        state = self.network.get_state()
+        
+        if bank_name not in self.network.bank_list:
+            raise ValueError(f"Bank '{bank_name}' not found in network")
+        
+        initial_equity = state.equity.get(bank_name, 0)
+        initial_assets = state.assets.get(bank_name, 0)
+        
+        # Apply shock (shock_percent is 0-100 from frontend)
+        shock_fraction = shock_percent / 100.0
+        shock_amount = initial_assets * shock_fraction
+        state.equity[bank_name] -= shock_amount
+        state.assets[bank_name] -= shock_amount
+        
+        direct_failure = state.equity[bank_name] <= 0
+        if direct_failure:
+            state.failed_banks.add(bank_name)
+        
+        bank_health_after = self.network.get_bank_health(bank_name)
+        
+        # Run contagion cascade
+        cascade_result = self.network.run_contagion(failure_threshold=failure_threshold)
+        
+        final_state = self.network.get_state()
+        
+        # Calculate CCP payoff
+        ccp_payoff = self.payoff_calculator.calculate_payoff(
+            final_state.failed_banks, final_state
+        )
+        
+        payoff_breakdown = self.payoff_calculator.get_detailed_breakdown(
+            final_state.failed_banks, final_state
+        )
+        
+        return {
+            'shock_type': 'BANK_SHOCK',
+            'target_bank': bank_name,
+            'shock_percent': shock_percent,
+            'shock_amount_B': round(shock_amount, 2),
+            'initial_equity_B': round(initial_equity, 2),
+            'final_equity_B': round(final_state.equity.get(bank_name, 0), 2),
+            'bank_health_after': round(bank_health_after, 2),
+            'direct_failure': direct_failure,
+            'failed_banks': list(final_state.failed_banks),
+            'total_failures': len(final_state.failed_banks),
+            'cascade_rounds': cascade_result['rounds'],
+            'systemic_loss_B': round(cascade_result['systemic_loss'], 2),
+            'ccp_payoff_B': round(ccp_payoff, 2),
+            'payoff_breakdown': payoff_breakdown
+        }
+
+
+# ─── Data loading functions ───────────────────────────────────────────────────
 
 def load_bank_attributes(csv_path):
     banks = {}
@@ -57,12 +381,11 @@ def load_bank_attributes(csv_path):
 
 
 def load_interbank_matrix(csv_path):
-    """Load interbank exposure matrix."""
     matrix = {}
     with open(csv_path, 'r') as f:
         reader = csv.reader(f)
         header = next(reader)
-        bank_names = header[1:]  # skip first empty column
+        bank_names = header[1:]
         for row in reader:
             from_bank = row[0]
             matrix[from_bank] = {}
@@ -102,7 +425,6 @@ def load_stock_prices(csv_path, num_stocks=10):
 
 
 def distribute_shares(bank_attributes, stock_prices):
-    import numpy as np
     tickers = list(stock_prices.keys())
     num_stocks = len(tickers)
     holdings = {}
@@ -136,7 +458,6 @@ def distribute_shares(bank_attributes, stock_prices):
 
 
 def build_graph(bank_attributes, interbank_matrix):
-    """Build graph using actual interbank exposure matrix instead of random generation."""
     bank_list = list(bank_attributes.keys())
 
     graph = {}
@@ -147,7 +468,6 @@ def build_graph(bank_attributes, interbank_matrix):
             'holdings': {},
         }
 
-    # Create edges based on interbank matrix (threshold: exposure > 0.01 $B)
     for from_bank in bank_list:
         if from_bank not in interbank_matrix:
             continue
@@ -161,7 +481,7 @@ def build_graph(bank_attributes, interbank_matrix):
     return graph
 
 
-# ─── Contagion engine (self-contained, adapted from train2.py) ────────────────
+# ─── Contagion engine ─────────────────────────────────────────────────────────
 
 class BankingNetworkContagion:
     def __init__(self, graph, stock_prices=None, interbank_matrix=None):
@@ -203,7 +523,6 @@ class BankingNetworkContagion:
             self.failed_banks.add(bank)
 
     def _get_interbank_exposure(self, from_bank, to_bank):
-        """Get actual interbank exposure from matrix."""
         return self.interbank_matrix.get(from_bank, {}).get(to_bank, 0)
 
     def propagate_bank_shock(self, initial_bank, devaluation_shock,
@@ -212,7 +531,6 @@ class BankingNetworkContagion:
         self.failed_banks = set()
         self.history = []
 
-        # Record initial state for all banks
         initial_healths = {b: self.get_bank_health(b) for b in self.graph}
 
         shock_amount = self.bank_states[initial_bank]['Total_Assets'] * (devaluation_shock / 100.0)
@@ -250,7 +568,6 @@ class BankingNetworkContagion:
                             self.mark_bank_failed(neighbor)
                             newly_failed.add(neighbor)
 
-                # Reverse channel (weaker)
                 for borrower in self.graph:
                     if failed_bank in self.graph[borrower]['neighbors']:
                         if borrower not in self.failed_banks:
@@ -362,7 +679,20 @@ class BankingNetworkContagion:
         survived = set(self.graph.keys()) - self.failed_banks
         avg_health = (sum(self.get_bank_health(b) for b in survived) / len(survived)) if survived else 0
 
-        # Per-bank detail for frontend
+        # Calculate CCP payoff
+        payoff_calc = CCPPayoffCalculator()
+        # Build a temporary SystemState-like object for payoff calculation
+        class TempState:
+            def __init__(self, bank_states, failed):
+                self.liabilities = {b: bank_states[b]['Total_Liabilities'] for b in bank_states}
+                self.assets = {b: bank_states[b]['Total_Assets'] for b in bank_states}
+                self.equity = {b: bank_states[b]['Equity'] for b in bank_states}
+                self.failed_banks = failed
+        
+        temp_state = TempState(self.bank_states, self.failed_banks)
+        ccp_payoff = payoff_calc.calculate_payoff(self.failed_banks, temp_state)
+        payoff_breakdown = payoff_calc.get_detailed_breakdown(self.failed_banks, temp_state)
+
         banks_detail = []
         for bank in self.graph:
             attrs = self.bank_states[bank]
@@ -389,6 +719,8 @@ class BankingNetworkContagion:
             'failed_banks': list(self.failed_banks),
             'contagion_history': self.history,
             'banks': banks_detail,
+            'ccp_payoff_B': round(ccp_payoff, 2),
+            'payoff_breakdown': payoff_breakdown,
         }
 
 
@@ -416,13 +748,19 @@ def init_simulation():
     print("[INIT] Building interbank graph...")
     SIM_STATE['graph'] = build_graph(SIM_STATE['bank_attrs'], SIM_STATE['interbank_matrix'])
 
-    # Attach holdings to graph
     for bank in SIM_STATE['graph']:
         if bank in SIM_STATE['holdings']:
             SIM_STATE['graph'][bank]['holdings'] = SIM_STATE['holdings'][bank]
 
     SIM_STATE['contagion'] = BankingNetworkContagion(
         SIM_STATE['graph'], prices, SIM_STATE['interbank_matrix'])
+
+    # Also initialize NetworkSimulator for advanced shock simulation
+    SIM_STATE['network_simulator'] = NetworkSimulator(
+        os.path.join(DATASET_DIR, 'us_banks_top50_nodes_final.csv'),
+        os.path.join(DATASET_DIR, 'stocks_data_long.csv'),
+        os.path.join(DATASET_DIR, 'us_banks_interbank_matrix.csv')
+    )
 
     print(f"[INIT] Ready — {len(SIM_STATE['bank_attrs'])} banks, "
           f"{len(prices)} stocks")
@@ -434,7 +772,7 @@ def init_simulation():
 def get_banks():
     """Return list of banks with attributes and health scores."""
     contagion = SIM_STATE['contagion']
-    contagion.initialize_states()  # fresh state
+    contagion.initialize_states()
     contagion.failed_banks = set()
 
     banks = []
@@ -470,7 +808,7 @@ def get_network():
         nodes.append({
             'id': bank,
             'name': bank,
-            'val': max(3, attrs['Total_Assets'] / 200),  # node size
+            'val': max(3, attrs['Total_Assets'] / 200),
             'total_assets': attrs['Total_Assets'],
             'health': contagion.get_bank_health(bank),
         })
@@ -504,7 +842,7 @@ def get_stocks():
         stocks.append({
             'ticker': ticker,
             'price': round(price, 2),
-            'timeseries': series[-30:] if len(series) > 30 else series,  # last 30 days
+            'timeseries': series[-30:] if len(series) > 30 else series,
         })
     return jsonify(stocks)
 
@@ -542,7 +880,6 @@ def simulate_bank_shock():
     contagion = SIM_STATE['contagion']
     result = contagion.propagate_bank_shock(bank, shock_pct, failure_threshold=threshold)
 
-    # Also include the current network state for graph re-rendering
     network = _get_post_sim_network(contagion)
     result['network'] = network
 
