@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getGreeting } from '../api';
 
-export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
+export default function ControlPanel({ banks, stocks, onSimulate, loading, mlStatus, onToggleMlMargins, marginInfo }) {
   const [mode, setMode] = useState('bank'); // 'bank' | 'stock'
   const [selectedBank, setSelectedBank] = useState('');
   const [bankShockPct, setBankShockPct] = useState(50);
@@ -42,6 +42,41 @@ export default function ControlPanel({ banks, stocks, onSimulate, loading }) {
     <>
       <div className="control-panel">
         <h2>Shock Controls</h2>
+
+        {/* ML Margin Toggle */}
+        <div className="ml-margin-toggle-section">
+          <div className="toggle-header">
+            <span className="toggle-label">Margin Requirements</span>
+            <div className="toggle-info">
+              Total: ${marginInfo?.total_margin_B?.toFixed(1) || 0}B
+            </div>
+          </div>
+          <div className="toggle-row">
+            <span className={`toggle-option ${!mlStatus?.ml_margins_enabled ? 'active' : ''}`}>
+              ❌ None
+            </span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={mlStatus?.ml_margins_enabled || false}
+                onChange={onToggleMlMargins}
+                disabled={loading || !mlStatus?.ml_available}
+              />
+              <span className="toggle-slider"></span>
+            </label>
+            <span className={`toggle-option ${mlStatus?.ml_margins_enabled ? 'active' : ''}`}>
+              🤖 ML Predicted
+            </span>
+          </div>
+          <p className="toggle-description">
+            {mlStatus?.ml_margins_enabled 
+              ? 'Using ML model to predict optimal margin requirements based on bank risk profiles.'
+              : 'No margin requirements applied. Banks have no collateral buffer against shocks.'}
+          </p>
+          {!mlStatus?.ml_available && (
+            <p className="toggle-warning">⚠️ ML model not available</p>
+          )}
+        </div>
 
         {/* Mode Toggle */}
         <div className="mode-toggle">

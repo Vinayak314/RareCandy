@@ -171,6 +171,9 @@ function App() {
             stocks={stocks}
             onSimulate={handleSimulate}
             loading={loading}
+            mlStatus={mlStatus}
+            onToggleMlMargins={handleToggleMlMargins}
+            marginInfo={marginInfo}
           />
         </aside>
 
